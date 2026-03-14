@@ -12,7 +12,7 @@ module Helpers =
     let inline createViewForWidget (parent: IViewNode) (widget: Widget) =
         let widgetDefinition = WidgetDefinitionStore.get widget.Key
 
-        widgetDefinition.CreateView(widget, parent.EnvironmentContext, parent.TreeContext, ValueSome parent)
+        widgetDefinition.CreateView(widget, parent.TreeContext, ValueSome parent)
 
 module ScalarAttributeComparers =
     let inline noCompare _ _ = ScalarAttributeComparison.Different
@@ -88,7 +88,7 @@ type MsgValue = MsgValue of obj
 type SimpleScalarAttributeDefinitionExtensions() =
     [<Extension>]
     static member inline WithValue(this: SimpleScalarAttributeDefinition<'args -> MsgValue>, value: 'args -> 'msg) =
-        this.WithValue(value >> box >> MsgValue)
+        this.WithValue(value >> box >> Unchecked.nonNull >> MsgValue)
 
 module Attributes =
     /// Define an attribute that can fit into 8 bytes encoded as uint64 (such as float or bool)

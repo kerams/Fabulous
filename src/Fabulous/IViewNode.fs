@@ -4,7 +4,7 @@ open System
 open Fabulous
 
 type ViewRef(onAttached, onDetached) =
-    let handle = System.WeakReference<obj>(null)
+    let handle = System.WeakReference<obj | null>(null)
 
     /// Check if the new target is the same than the previous one
     /// This is done to avoid triggering change events when nothing changes
@@ -48,9 +48,6 @@ and IViewNode =
 
     /// The context of the whole view tree
     abstract member TreeContext: ViewTreeContext
-
-    /// The environment context
-    abstract member EnvironmentContext: EnvironmentContext
 
     // note that Widget is struct type, thus we have boxing via option
     // we don't have MemoizedWidget set for 99.9% of the cases

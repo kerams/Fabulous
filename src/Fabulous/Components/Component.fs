@@ -7,20 +7,19 @@ open System
 type binding
 
 type ComponentBody =
-    delegate of EnvironmentContext * ViewTreeContext * ComponentContext -> struct (EnvironmentContext * ViewTreeContext * ComponentContext * Widget)
+    delegate of ViewTreeContext * ComponentContext -> struct (ViewTreeContext * ComponentContext * Widget)
 
 [<Struct; NoEquality; NoComparison>]
 type ComponentData = { Key: string; Body: ComponentBody }
 
 type Component
-    (componentDataKey: ScalarAttributeKey, envContext: EnvironmentContext, treeContext: ViewTreeContext, context: ComponentContext, body: ComponentBody) =
-    let mutable _envContext = envContext
+    (componentDataKey: ScalarAttributeKey, treeContext: ViewTreeContext, context: ComponentContext, body: ComponentBody) =
     let mutable _treeContext = treeContext
     let mutable _context = context
-    let mutable _body = body
+    let mutable _body: ComponentBody | null = body
     let mutable _widget = Unchecked.defaultof<_>
     let mutable _view = null
-    let mutable _contextSubscription: IDisposable = null
+    let mutable _contextSubscription: IDisposable | null = null
 
     let mutable _isReadyForRenderRequest = false
     let mutable _pendingRenderRequested = false
@@ -28,7 +27,7 @@ type Component
     member private this.MergeAttributes(rootWidget: Widget, componentWidgetOpt: Widget voption) =
         match componentWidgetOpt with
         | ValueNone ->
-            struct (rootWidget.ScalarAttributes, rootWidget.WidgetAttributes, rootWidget.WidgetCollectionAttributes, rootWidget.EnvironmentAttributes)
+            struct (rootWidget.ScalarAttributes, rootWidget.WidgetAttributes, rootWidget.WidgetCollectionAttributes)
 
         | ValueSome componentWidget ->
             let componentScalars =
@@ -61,28 +60,20 @@ type Component
                 | [||], attrs -> attrs
                 | widgetAttrs, componentAttrs -> Array.append componentAttrs widgetAttrs
 
-            let environments =
-                match rootWidget.EnvironmentAttributes, componentWidget.EnvironmentAttributes with
-                | [||], [||] -> [||]
-                | attrs, [||]
-                | [||], attrs -> attrs
-                | widgetAttrs, componentAttrs -> Array.append componentAttrs widgetAttrs
-
-            struct (scalars, widgets, widgetColls, environments)
+            struct (scalars, widgets, widgetColls)
 
     member this.CreateView(componentWidget: Widget voption) =
         _isReadyForRenderRequest <- false
         _contextSubscription <- _context.RenderNeeded.Subscribe(this.Render)
 
-        let struct (envContext, treeContext, context, rootWidget) =
-            _body.Invoke(_envContext, _treeContext, _context)
+        let struct (treeContext, context, rootWidget) =
+            _body.Invoke(_treeContext, _context)
 
         _widget <- rootWidget
-        _envContext <- envContext
         _treeContext <- treeContext
         _context <- context
 
-        let struct (scalars, widgets, widgetColls, environments) =
+        let struct (scalars, widgets, widgetColls) =
             this.MergeAttributes(rootWidget, componentWidget)
 
         let rootWidget: Widget =
@@ -92,14 +83,13 @@ type Component
 #endif
               ScalarAttributes = scalars
               WidgetAttributes = widgets
-              WidgetCollectionAttributes = widgetColls
-              EnvironmentAttributes = environments }
+              WidgetCollectionAttributes = widgetColls }
 
         // Create the actual view
         let widgetDef = WidgetDefinitionStore.get rootWidget.Key
 
         let struct (node, view) =
-            widgetDef.CreateView(rootWidget, envContext, treeContext, ValueNone)
+            widgetDef.CreateView(rootWidget, treeContext, ValueNone)
 
         _view <- view
         _isReadyForRenderRequest <- true
@@ -116,15 +106,14 @@ type Component
         _isReadyForRenderRequest <- false
         _contextSubscription <- _context.RenderNeeded.Subscribe(this.Render)
 
-        let struct (envContext, treeContext, context, rootWidget) =
-            _body.Invoke(_envContext, _treeContext, _context)
+        let struct (treeContext, context, rootWidget) =
+            _body.Invoke(_treeContext, _context)
 
         _widget <- rootWidget
-        _envContext <- envContext
         _treeContext <- treeContext
         _context <- context
 
-        let struct (scalars, widgets, widgetColls, environments) =
+        let struct (scalars, widgets, widgetColls) =
             this.MergeAttributes(rootWidget, ValueSome componentWidget)
 
         let rootWidget: Widget =
@@ -134,14 +123,13 @@ type Component
 #endif
               ScalarAttributes = scalars
               WidgetAttributes = widgets
-              WidgetCollectionAttributes = widgetColls
-              EnvironmentAttributes = environments }
+              WidgetCollectionAttributes = widgetColls }
 
         // Attach the widget to the existing view
         let widgetDef = WidgetDefinitionStore.get rootWidget.Key
 
         let node =
-            widgetDef.AttachView(rootWidget, envContext, treeContext, ValueNone, view)
+            widgetDef.AttachView(rootWidget, treeContext, ValueNone, view)
 
         _view <- view
         _isReadyForRenderRequest <- true
@@ -161,16 +149,15 @@ type Component
             let prevRootWidget = _widget
             let prevContext = _context
 
-            let struct (envContext, treeContext, context, currRootWidget) =
-                _body.Invoke(_envContext, _treeContext, _context)
+            let struct (treeContext, context, currRootWidget) =
+                _body.Invoke(_treeContext, _context)
 
             _widget <- currRootWidget
-            _envContext <- envContext
             _treeContext <- treeContext
 
             if prevContext <> context then
                 _contextSubscription.Dispose()
-                prevContext.Dispose()
+                (prevContext :> IDisposable).Dispose()
                 _contextSubscription <- context.RenderNeeded.Subscribe(this.Render)
                 _context <- context
 
@@ -183,12 +170,11 @@ type Component
             _contextSubscription.Dispose()
 
         if not(isNull _context) then
-            _context.Dispose()
+            (_context :> IDisposable).Dispose()
 
         _body <- null
         _widget <- Unchecked.defaultof<_>
         _view <- null
-        _envContext <- Unchecked.defaultof<_>
         _treeContext <- Unchecked.defaultof<_>
         _contextSubscription <- null
         _context <- null

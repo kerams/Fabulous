@@ -21,7 +21,7 @@ module View =
         : WidgetBuilder<'msg, Memo.Memoized<'marker>> =
 
         let memo: Memo.MemoData =
-            { KeyData = box key
+            { KeyData = box key |> Unchecked.nonNull
               KeyComparer = fun (prev: obj) (next: obj) -> unbox<'key> prev = unbox<'key> next
               CreateWidget = fun k -> fn(unbox<'key> k).Compile()
               KeyType = typeof<'key>

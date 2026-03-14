@@ -12,10 +12,6 @@ type Subscribe<'msg> = Dispatch<'msg> -> IDisposable
 type Sub<'msg> = (SubId * Subscribe<'msg>) list
 
 module Sub =
-
-    /// None - no subscriptions, also known as `[]`
-    let none: Sub<'msg> = []
-
     /// Aggregate multiple subscriptions
     let batch (subs: Sub<'msg> list) : Sub<'msg> = List.concat subs
 

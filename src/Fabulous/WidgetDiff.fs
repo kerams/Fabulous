@@ -58,21 +58,6 @@ module private SkipRepeatingScalars =
 
             resultingIndex
 
-    let inline skipEnv (scalars: EnvironmentAttribute array) (pos: int) =
-        let length = scalars.Length
-        // either the last element or out of bounds
-        if pos >= length - 1 then
-            pos
-        else
-            // that means that there is at least one more element ahead
-            let key = scalars[pos].Key
-            let mutable resultingIndex = pos
-
-            while (length - 1 > resultingIndex) && (scalars[resultingIndex + 1].Key = key) do
-                resultingIndex <- resultingIndex + 1
-
-            resultingIndex
-
 [<Struct; IsByRefLike; RequireQualifiedAccess>]
 type ScalarChange =
     | Added of attr: ScalarAttribute
@@ -83,7 +68,7 @@ and [<Struct; RequireQualifiedAccess>] WidgetChange =
     | Added of widget: WidgetAttribute
     | Removed of widget: WidgetAttribute
     | Updated of widget: WidgetAttribute * diff: WidgetDiff // updated * diff
-    | ReplacedBy of oldWidget: WidgetAttribute * newWidget: WidgetAttribute
+    | ReplacedBy of widget: WidgetAttribute * newWidget: WidgetAttribute // old * new
 
 and [<Struct; RequireQualifiedAccess>] WidgetCollectionChange =
     | Added of attr: WidgetCollectionAttribute
@@ -96,16 +81,10 @@ and [<Struct; IsByRefLike; RequireQualifiedAccess>] WidgetCollectionItemChange =
     | Update of index: int * diff: WidgetDiff
     | Remove of index: int * widget: Widget
 
-and [<Struct; IsByRefLike; RequireQualifiedAccess>] EnvironmentChange =
-    | Added of attr: EnvironmentAttribute
-    | Removed of attr: EnvironmentAttribute
-    | Updated of attr: EnvironmentAttribute * updated: EnvironmentAttribute // old * updated
-
 and [<Struct; NoComparison; NoEquality>] WidgetDiff =
     { ScalarChanges: ScalarChanges
       WidgetChanges: WidgetChanges
-      WidgetCollectionChanges: WidgetCollectionChanges
-      EnvironmentChanges: EnvironmentChanges }
+      WidgetCollectionChanges: WidgetCollectionChanges }
 
     static member inline create
         (
@@ -130,15 +109,9 @@ and [<Struct; NoComparison; NoEquality>] WidgetDiff =
             | ValueNone -> [||]
             | ValueSome widget -> widget.WidgetCollectionAttributes
 
-        let prevEnvironmentAttributes =
-            match prevOpt with
-            | ValueNone -> [||]
-            | ValueSome widget -> widget.EnvironmentAttributes
-
         { ScalarChanges = ScalarChanges(prevScalarAttributes, next.ScalarAttributes, compareScalars)
           WidgetChanges = WidgetChanges(prevWidgetAttributes, next.WidgetAttributes, canReuseView, compareScalars)
-          WidgetCollectionChanges = WidgetCollectionChanges(prevWidgetCollectionAttributes, next.WidgetCollectionAttributes, canReuseView, compareScalars)
-          EnvironmentChanges = EnvironmentChanges(prevEnvironmentAttributes, next.EnvironmentAttributes) }
+          WidgetCollectionChanges = WidgetCollectionChanges(prevWidgetCollectionAttributes, next.WidgetCollectionAttributes, canReuseView, compareScalars) }
 
 and [<Struct; NoComparison; NoEquality>] ScalarChanges
     (prev: ScalarAttribute[], next: ScalarAttribute[], compareScalars: ScalarAttributeKey -> obj -> obj -> ScalarAttributeComparison) =
@@ -175,10 +148,6 @@ and [<Struct; NoComparison; NoEquality>] WidgetCollectionItemChanges
     ) =
     member _.GetEnumerator() =
         WidgetCollectionItemChangesEnumerator(ArraySlice.toSpan prev, ArraySlice.toSpan next, canReuseView, compareScalars)
-
-and [<Struct; NoComparison; NoEquality>] EnvironmentChanges(prev: EnvironmentAttribute[], next: EnvironmentAttribute[]) =
-    member _.GetEnumerator() =
-        EnvironmentChangesEnumerator(EnumerationMode.fromOptions prev next)
 
 // enumerators
 and [<Struct; IsByRefLike>] ScalarChangesEnumerator
@@ -563,106 +532,3 @@ and [<Struct; IsByRefLike>] WidgetCollectionItemChangesEnumerator
         else
             // means that we are done iterating
             false
-
-and [<Struct; IsByRefLike>] EnvironmentChangesEnumerator(mode: EnumerationMode<EnvironmentAttribute>) =
-
-    [<DefaultValue(false)>]
-    val mutable private current: EnvironmentChange
-
-    [<DefaultValue(false)>]
-    val mutable private prevIndex: int
-
-    [<DefaultValue(false)>]
-    val mutable private nextIndex: int
-
-    member e.Current = e.current
-
-    member e.MoveNext() =
-        match mode with
-        | EnumerationMode.Empty -> false
-        | EnumerationMode.AllAddedOrRemoved(attributes, added) ->
-            // use prevIndex regardless if it is for adding or removal
-            let i = e.prevIndex
-
-            if i < attributes.Length then
-                let attribute = attributes[i]
-
-                e.current <-
-                    match added with
-                    | false -> EnvironmentChange.Removed attribute
-                    | true -> EnvironmentChange.Added attribute
-
-                e.prevIndex <- i + 1
-                true
-            else
-                false
-
-        | EnumerationMode.ActualDiff(prev, next) ->
-            let mutable prevIndex = SkipRepeatingScalars.skipEnv prev e.prevIndex
-
-            let mutable nextIndex = SkipRepeatingScalars.skipEnv next e.nextIndex
-
-            let prevLength = prev.Length
-            let nextLength = next.Length
-
-            let mutable res: bool voption = ValueNone
-            // that needs to be in a loop until we have a change
-
-            while ValueOption.isNone res do
-                if not(prevIndex >= prevLength && nextIndex >= nextLength) then
-                    if prevIndex = prevLength then
-                        // that means we are done with the prev and only need to add next's tail to added
-                        e.current <- EnvironmentChange.Added next[nextIndex]
-                        res <- ValueSome true
-                        nextIndex <- nextIndex + 1
-
-                    elif nextIndex = nextLength then
-                        // that means that we are done with new items and only need prev's tail to removed
-                        e.current <- EnvironmentChange.Removed prev[prevIndex]
-                        res <- ValueSome true
-                        prevIndex <- prevIndex + 1
-
-                    else
-                        // we haven't reached either of the ends
-                        let prevAttr = prev[prevIndex]
-                        let nextAttr = next[nextIndex]
-
-                        let prevKey = prevAttr.Key
-                        let nextKey = nextAttr.Key
-
-                        match EnvironmentAttributeKey.compare prevKey nextKey with
-                        | c when c < 0 ->
-                            // prev key is less than next -> remove prev key
-                            e.current <- EnvironmentChange.Removed prev[prevIndex]
-                            res <- ValueSome true
-                            prevIndex <- prevIndex + 1
-
-                        | c when c > 0 ->
-                            // prev key is more than next -> add next item
-                            e.current <- EnvironmentChange.Added next[nextIndex]
-                            res <- ValueSome true
-                            nextIndex <- nextIndex + 1
-
-                        | _ ->
-                            // means that we are targeting the same attribute
-                            if prevAttr.Value = nextAttr.Value then
-                                // Previous and next values are identical, we don't need to do anything
-                                ()
-                            else
-                                // New value completely replaces the old value
-                                e.current <- EnvironmentChange.Updated(prev[prevIndex], next[nextIndex])
-                                res <- ValueSome true
-
-                            // move both pointers
-                            prevIndex <- SkipRepeatingScalars.skipEnv prev (prevIndex + 1)
-                            nextIndex <- SkipRepeatingScalars.skipEnv next (nextIndex + 1)
-
-                else
-                    res <- ValueSome false
-
-            e.prevIndex <- prevIndex
-            e.nextIndex <- nextIndex
-
-            match res with
-            | ValueNone -> false
-            | ValueSome res -> res

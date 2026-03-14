@@ -1,4 +1,4 @@
-﻿namespace Fabulous
+namespace Fabulous
 
 open System
 open System.Collections.Generic
@@ -8,9 +8,8 @@ open Fabulous
 [<Sealed>]
 type ViewNode =
     val mutable parent: IViewNode option
-    val mutable envContext: EnvironmentContext
     val mutable treeContext: ViewTreeContext
-    val mutable targetRef: WeakReference
+    val mutable targetRef: WeakReference | null
     val mutable isDisposed: bool
     val mutable memoizedWidget: Widget option
     val mutable mapMsg: (obj -> obj) option
@@ -20,9 +19,8 @@ type ViewNode =
     // ViewNode is supposed to be mutable, stateful and persistent object
     val handlers: Dictionary<string, IDisposable>
 
-    new(parent: IViewNode option, envContext: EnvironmentContext, treeContext: ViewTreeContext, target: WeakReference) =
+    new(parent: IViewNode option, treeContext: ViewTreeContext, target: WeakReference) =
         { parent = parent
-          envContext = envContext
           treeContext = treeContext
           targetRef = target
           handlers = Dictionary<string, IDisposable>()
@@ -119,27 +117,9 @@ type ViewNode =
 
                 definition.ApplyDiff oldAttr.Value diffs (this :> IViewNode)
 
-    member inline private this.ApplyEnvironmentDiffs(diffs: EnvironmentChanges inref) : unit =
-        let node = this :> IViewNode
-
-        for diff in diffs do
-            match diff with
-            | EnvironmentChange.Added added ->
-                let key = added.Key
-                node.EnvironmentContext.SetInternal(key, added.Value, true)
-
-            | EnvironmentChange.Removed removed ->
-                let key = removed.Key
-                node.EnvironmentContext.RemoveInternal(key, true)
-
-            | EnvironmentChange.Updated(oldAttr, newAttr) ->
-                let key = oldAttr.Key
-                node.EnvironmentContext.SetInternal(key, newAttr.Value, true)
-
     interface IViewNode with
         member this.Target = this.targetRef.Target
         member this.TreeContext = this.treeContext
-        member this.EnvironmentContext = this.envContext
 
         member this.MemoizedWidget
             with get () = this.memoizedWidget
@@ -188,10 +168,7 @@ type ViewNode =
             this.targetRef <- null
 
         member this.ApplyDiff(diff) =
-            if not this.targetRef.IsAlive then
-                ()
-            else
-                this.ApplyEnvironmentDiffs(&diff.EnvironmentChanges)
+            if this.targetRef.IsAlive then
                 this.ApplyWidgetDiffs(&diff.WidgetChanges)
                 this.ApplyWidgetCollectionDiffs(&diff.WidgetCollectionChanges)
                 this.ApplyScalarDiffs(&diff.ScalarChanges)

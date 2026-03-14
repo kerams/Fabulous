@@ -8,8 +8,8 @@ type WidgetDefinition =
     { Key: WidgetKey
       Name: string
       TargetType: Type
-      CreateView: Widget * EnvironmentContext * ViewTreeContext * IViewNode voption -> struct (IViewNode * obj)
-      AttachView: Widget * EnvironmentContext * ViewTreeContext * IViewNode voption * obj -> IViewNode }
+      CreateView: Widget * ViewTreeContext * IViewNode voption -> struct (IViewNode * obj)
+      AttachView: Widget * ViewTreeContext * IViewNode voption * obj -> IViewNode }
 
 module WidgetDefinitionStore =
     let private _widgets = ResizeArray<WidgetDefinition>()

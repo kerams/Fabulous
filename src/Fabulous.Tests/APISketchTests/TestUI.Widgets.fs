@@ -29,7 +29,7 @@ module TestUI_Widgets =
                   Name = typeof<'T>.Name
                   TargetType = typeof<'T>
                   CreateView =
-                    fun (widget, envContext, treeContext, parentNode) ->
+                    fun (widget, treeContext, parentNode) ->
                         // let name = typeof<'T>.Name
                         //                      printfn $"Creating view for {name}"
 
@@ -41,7 +41,7 @@ module TestUI_Widgets =
                             | ValueNone -> None
                             | ValueSome parent -> Some parent
 
-                        let viewNode = new ViewNode(parentNode, envContext, treeContext, weakReference)
+                        let viewNode = new ViewNode(parentNode, treeContext, weakReference)
 
                         view.PropertyBag.Add(ViewNode.ViewNodeProperty, viewNode)
 
@@ -49,7 +49,7 @@ module TestUI_Widgets =
 
                         Reconciler.update treeContext.CanReuseView oldWidget widget viewNode
                         struct (viewNode :> IViewNode, box view)
-                  AttachView = fun (_widget, _envContext, _treeContext, _parentNode, _view) -> failwith "not implemented" }
+                  AttachView = fun (_widget, _treeContext, _parentNode, _view) -> failwith "not implemented" }
 
             WidgetDefinitionStore.set key definition
             key
@@ -188,8 +188,6 @@ module TestUI_Widgets =
                 { Log = fun _ -> ()
                   MinLogLevel = LogLevel.Fatal }
 
-            member private x.envContext = new EnvironmentContext(logger)
-
             member private x.treeContext: ViewTreeContext =
                 { CanReuseView = ViewHelpers.canReuseView
                   GetViewNode = ViewNode.getViewNode
@@ -228,7 +226,7 @@ module TestUI_Widgets =
                 let widgetDef = WidgetDefinitionStore.get widget.Key
 
                 let struct (_node, view) =
-                    widgetDef.CreateView(widget, x.envContext, x.treeContext, ValueNone)
+                    widgetDef.CreateView(widget, x.treeContext, ValueNone)
 
                 state <- Some(model, view, widget)
 

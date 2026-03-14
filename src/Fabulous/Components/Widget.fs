@@ -14,73 +14,47 @@ module Component' =
               Name = "Component"
               TargetType = typeof<Component>
               CreateView =
-                fun (widget, envContext, treeContext, _) ->
-                    match widget.ScalarAttributes with
-                    | [||] -> failwith "Component widget must have a body"
-                    | attrs ->
-                        let data =
-                            let scalarAttrsOpt =
-                                attrs |> Array.tryFind(fun scalarAttr -> scalarAttr.Key = Data.Key)
+                fun (widget, treeContext, _) ->
+                    let data =
+                        match widget.ScalarAttributes |> Array.tryFind(fun scalarAttr -> scalarAttr.Key = Data.Key) with
+                        | Some attr -> attr.Value :?> ComponentData
+                        | None -> failwith "Component widget must have a body"
 
-                            match scalarAttrsOpt with
-                            | Some attr -> attr.Value :?> ComponentData
-                            | None -> failwith "Component widget must have a body"
+                    let context = new ComponentContext()
+                    let comp = new Component(Data.Key, treeContext, context, data.Body)
+                    let struct (node, view) = comp.CreateView(ValueSome widget)
 
-                        let envContext = new EnvironmentContext(treeContext.Logger, envContext)
-                        let context = new ComponentContext()
-                        let comp = new Component(Data.Key, envContext, treeContext, context, data.Body)
-                        let struct (node, view) = comp.CreateView(ValueSome widget)
+                    treeContext.SetComponent comp view
 
-                        treeContext.SetComponent comp view
-
-                        struct (node, view)
+                    struct (node, view)
               AttachView =
-                fun (widget, envContext, treeContext, _, view) ->
-                    match widget.ScalarAttributes with
-                    | [||] -> failwith "Component widget must have a body"
-                    | attrs ->
-                        let data =
-                            let scalarAttrsOpt =
-                                attrs |> Array.tryFind(fun scalarAttr -> scalarAttr.Key = Data.Key)
+                fun (widget, treeContext, _, view) ->
+                    let data =
+                        match widget.ScalarAttributes |> Array.tryFind(fun scalarAttr -> scalarAttr.Key = Data.Key) with
+                        | Some attr -> attr.Value :?> ComponentData
+                        | None -> failwith "Component widget must have a body"
 
-                            match scalarAttrsOpt with
-                            | Some attr -> attr.Value :?> ComponentData
-                            | None -> failwith "Component widget must have a body"
+                    let context = new ComponentContext()
+                    let comp = new Component(Data.Key, treeContext, context, data.Body)
+                    let node = comp.AttachView(widget, view)
 
-                        let envContext = new EnvironmentContext(treeContext.Logger, envContext)
-                        let context = new ComponentContext()
-                        let comp = new Component(Data.Key, envContext, treeContext, context, data.Body)
-                        let node = comp.AttachView(widget, view)
+                    treeContext.SetComponent comp view
 
-                        treeContext.SetComponent comp view
-
-                        node }
+                    node }
 
         WidgetDefinitionStore.set key definition
         key
 
     let canReuseComponent (prev: Widget) (curr: Widget) =
         let prevData =
-            match prev.ScalarAttributes with
-            | [||] -> failwith "Component widget must have a body"
-            | attrs ->
-                let scalarAttrsOpt =
-                    attrs |> Array.tryFind(fun scalarAttr -> scalarAttr.Key = Data.Key)
-
-                match scalarAttrsOpt with
-                | None -> failwithf "Component widget must have a body"
-                | Some value -> value.Value :?> ComponentData
+            match prev.ScalarAttributes |> Array.tryFind(fun scalarAttr -> scalarAttr.Key = Data.Key) with
+            | None -> failwithf "Component widget must have a body"
+            | Some value -> value.Value :?> ComponentData
 
         let currData =
-            match curr.ScalarAttributes with
-            | [||] -> failwith "Component widget must have a body"
-            | attrs ->
-                let scalarAttrsOpt =
-                    attrs |> Array.tryFind(fun scalarAttr -> scalarAttr.Key = Data.Key)
-
-                match scalarAttrsOpt with
-                | None -> failwithf "Component widget must have a body"
-                | Some value -> value.Value :?> ComponentData
+            match curr.ScalarAttributes |> Array.tryFind(fun scalarAttr -> scalarAttr.Key = Data.Key) with
+            | None -> failwithf "Component widget must have a body"
+            | Some value -> value.Value :?> ComponentData
 
         // NOTE: Somehow using = here crashes the app and prevents debugging...
         Object.Equals(prevData.Key, currData.Key)

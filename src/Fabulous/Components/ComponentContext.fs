@@ -28,7 +28,7 @@ type ComponentContext(initialSize: int) =
         nextId
 
     let id = getNextId()
-    let mutable values = Array.zeroCreate initialSize
+    let values = ResizeArray initialSize
     let disposables = System.Collections.Generic.Dictionary<string, IDisposable>()
 
     let renderNeeded = Event<unit>()
@@ -41,24 +41,13 @@ type ComponentContext(initialSize: int) =
     member this.RenderNeeded = renderNeeded.Publish
     member this.NeedsRender() = renderNeeded.Trigger()
 
-    member private this.ResizeIfNeeded(count: int) =
-        // If the array is already big enough, we don't need to do anything
-        // Otherwise, we create a new array and copy the values from the old one
-        // It is assumed the component will have a stable amount of values, so this should not happen often
-        if values.Length < count then
-            let newLength = max (values.Length * 2) count
-            let newArray = Array.zeroCreate newLength
-            newArray[.. values.Length - 1] <- values
-            values <- newArray
-
     member this.TryGetValue<'T>(key: int) =
-        this.ResizeIfNeeded(key + 1)
+        values.EnsureCapacity (key + 1) |> ignore
 
-        let value = values[key]
-
-        if isNull value then
+        match values[key] with
+        | null ->
             ValueNone
-        else
+        | value ->
             ValueSome(unbox<'T> value)
 
     [<EditorBrowsable(EditorBrowsableState.Never)>]
@@ -76,20 +65,19 @@ type ComponentContext(initialSize: int) =
             disposables[key] <- disposable
             disposable
 
-    member this.Dispose() =
-        for disposable in disposables do
-            disposable.Value.Dispose()
-
-        disposables.Clear()
-
-        for value in values do
-            if value :? IDisposable then
-                (value :?> IDisposable).Dispose()
-
-        values <- Array.empty
-
     interface IDisposable with
-        member this.Dispose() = this.Dispose()
+        member this.Dispose() =
+            for disposable in disposables do
+                disposable.Value.Dispose()
+
+            disposables.Clear()
+
+            for value in values do
+                match value with
+                | :? IDisposable as d -> d.Dispose()
+                | _ -> ()
+
+            values.Clear ()
 
 [<AbstractClass; Sealed>]
 type Context private () = class end

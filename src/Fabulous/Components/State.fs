@@ -80,7 +80,7 @@ type StateExtensions =
             [<InlineIfLambda>] fn: StateRequest<'T>,
             [<InlineIfLambda>] continuation: StateValue<'T> -> ComponentBodyBuilder<'msg, 'marker>
         ) =
-        ComponentBodyBuilder<'msg, 'marker>(fun envContext treeContext context bindings ->
+        ComponentBodyBuilder<'msg, 'marker>(fun treeContext context bindings ->
             let key = int bindings
 
             let value =
@@ -93,4 +93,4 @@ type StateExtensions =
 
             let stateValue = StateValue<'T>(context, key, value)
 
-            (continuation stateValue).Invoke(envContext, treeContext, context, bindings + 1<binding>))
+            (continuation stateValue).Invoke(treeContext, context, bindings + 1<binding>))

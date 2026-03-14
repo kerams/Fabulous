@@ -1,8 +1,9 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <TargetFrameworks>net8.0;netstandard2.1</TargetFrameworks>
+    <TargetFrameworks>net10.0</TargetFrameworks>
     <PackageId>Fabulous</PackageId>
     <IsPackable>true</IsPackable>
+    <Nullable>enable</Nullable>
   </PropertyGroup>
   <!-- NuGet Package -->
   <PropertyGroup>
@@ -26,7 +27,6 @@
     <Compile Include="Primitives.fs" />
     <Compile Include="Logger.fs" />
     <Compile Include="WidgetDiff.fs" />
-    <Compile Include="EnvironmentContext.fs" />
     <Compile Include="IViewNode.fs" />
     <Compile Include="AttributeDefinitions.fs" />
     <Compile Include="WidgetDefinitions.fs" />
@@ -50,8 +50,6 @@
     <Compile Include="Components\Builder.fs" />
     <Compile Include="Components\State.fs" />
     <Compile Include="Components\Binding.fs" />
-    <Compile Include="Components\Environment.fs" />
-    <Compile Include="Components\EnvironmentObject.fs" />
     <Compile Include="Components\Mvu.fs" />
     <Compile Include="View.fs" />
   </ItemGroup>
@@ -60,6 +58,6 @@
       FSharp.Core is fixed to a specific version that is not necessarily the latest one.
       This version will be used as the lower bound in the NuGet package
     -->
-    <PackageReference Include="FSharp.Core" VersionOverride="8.0.300" />
+    <PackageReference Include="FSharp.Core" VersionOverride="9.0.300" />
   </ItemGroup>
 </Project>

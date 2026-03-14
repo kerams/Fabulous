@@ -48,8 +48,8 @@ module ArraySlice =
 
 module Array =
     let inline appendOne (v: 'v) (arr: 'v array) =
-        let res = Array.zeroCreate(arr.Length + 1)
-        arr.CopyTo(res.AsSpan())
+        let res = GC.AllocateUninitializedArray<'v> (arr.Length + 1, false)
+        Array.Copy (arr, res, arr.Length)
         res[arr.Length] <- v
         res
 
@@ -135,12 +135,11 @@ module StackAllocatedCollections =
                                 // copy 1 item
                                 arr[size - 1] <- v0
                                 1
-                            | 2us ->
+                            | _ ->
                                 // copy 2 item
                                 arr[size - 1] <- v1
                                 arr[size - 2] <- v0
                                 2
-                            | _ -> 0
 
                         let mutable i = size - used - 1
                         let mutable leftToCopy = data.before
@@ -246,80 +245,63 @@ module StackAllocatedCollections =
                         | struct (false, _) -> data
             end
 
-
-
-
-    type Size =
-        | Zero = 0uy
-        | One = 1uy
-        | Two = 2uy
-        | Three = 3uy
-
-
     [<Struct; NoComparison; NoEquality>]
     type StackArray3<'v> =
+        | Empty
+        | One of v0: 'v
+        | Two of v0: 'v * v1: 'v
+        | Three of v0: 'v * v1: 'v * v2: 'v
         | Many of arr: 'v array
-        | Few of data: Size * 'v * 'v * 'v
 
     module StackArray3 =
-
-        let inline empty () : StackArray3<'v> =
-            Few(Size.Zero, Unchecked.defaultof<'v>, Unchecked.defaultof<'v>, Unchecked.defaultof<'v>)
-
-        let inline one (v0: 'v) : StackArray3<'v> =
-            Few(Size.One, v0, Unchecked.defaultof<'v>, Unchecked.defaultof<'v>)
-
-        let inline two (v0: 'v, v1: 'v) : StackArray3<'v> =
-            Few(Size.Two, v0, v1, Unchecked.defaultof<'v>)
-
-        let inline three (v0: 'v, v1: 'v, v2: 'v) : StackArray3<'v> = Few(Size.Three, v0, v1, v2)
-
-        let inline many (arr: 'v array) : StackArray3<'v> = Many arr
-
         let add (arr: StackArray3<'v> inref, v: 'v) : StackArray3<'v> =
             match arr with
-            | Few(size, v0, v1, v2) ->
-                match size with
-                | Size.Zero -> one v
-                | Size.One -> two(v0, v)
-                | Size.Two -> three(v0, v1, v)
-                | Size.Three -> many [| v0; v1; v2; v |]
-                | _ -> empty() // should never happen but don't want to throw there
-            | Many arr -> many(Array.appendOne v arr)
+            | Empty -> One v
+            | One v0 -> Two(v0, v)
+            | Two (v0, v1) -> Three(v0, v1, v)
+            | Three (v0, v1, v2) -> Many [| v0; v1; v2; v |]
+            | Many arr -> Many(Array.appendOne v arr)
 
 
         let inline length (arr: StackArray3<'v> inref) : int =
             match arr with
-            | Few(size, _, _, _) -> int size
+            | Empty -> 0
+            | One _ -> 1
+            | Two _ -> 2
+            | Three _ -> 3
             | Many arr -> arr.Length
 
 
         let get (arr: StackArray3<'v> inref) (index: int) : 'v =
             match arr with
-            | Few(size, v0, v1, v2) ->
-                if (index >= int size) then
-                    IndexOutOfRangeException() |> raise
-                else
-                    match index with
-                    | 0 -> v0
-                    | 1 -> v1
-                    | _ -> v2
-
             | Many arr -> arr[index]
+            | One v0 when index = 0 -> v0
+            | Two (v0, v1) when index < 2 -> if index = 0 then v0 else v1
+            | Three (v0, v1, v2) when index < 3 -> if index = 0 then v0 elif index = 1 then v1 else v2
+            | _ -> IndexOutOfRangeException() |> raise
 
 
         let find (test: 'v -> bool) (arr: StackArray3<'v> inref) : 'v =
             match arr with
-            | Few(size, v0, v1, v2) ->
-                match (size, test v0, test v1, test v2) with
-                | Size.One, true, _, _
-                | Size.Two, true, _, _
-                | Size.Three, true, _, _ -> v0
-                | Size.Two, false, true, _
-                | Size.Three, false, true, _ -> v1
-                | Size.Three, false, false, true -> v2
-                | _ -> KeyNotFoundException() |> raise
+            | Two (v0, v1) ->
+                if test v0 then
+                    v0
+                elif test v1 then
+                    v1
+                else
+                    KeyNotFoundException() |> raise
+            | Three (v0, v1, v2) ->
+                if test v0 then
+                    v0
+                elif test v1 then
+                    v1
+                elif test v2 then
+                    v2
+                else
+                    KeyNotFoundException() |> raise
             | Many arr -> Array.find test arr
+            | One v0 when test v0 -> v0
+            | _ -> KeyNotFoundException() |> raise
 
 
         /// Note that you should always use the result,
@@ -327,76 +309,56 @@ module StackAllocatedCollections =
         /// In Many case it sorts the Many variant inline for optimization reasons
         let rec inline sortInPlace<'T, 'V when 'V: comparison> ([<InlineIfLambda>] getKey: 'T -> 'V) (arr: StackArray3<'T> inref) : StackArray3<'T> =
             match arr with
-            | Few(size, v0, v1, v2) ->
-                match size with
-                | Size.Zero
-                | Size.One -> arr
-                | Size.Two -> if (getKey v0 > getKey v1) then two(v1, v0) else arr
-                | Size.Three ->
-                    match (getKey v0, getKey v1, getKey v1) with
-                    // abc acb bac bca cba cab
+            | Many arr -> Many(Array.sortInPlace getKey arr)
+            | Three (v0, v1, v2) ->
+                match (getKey v0, getKey v1, getKey v1) with
+                // abc acb bac bca cba cab
 
-                    //  a, c, b
-                    | a, b, c when a <= c && c <= b -> three(v0, v2, v1)
+                //  a, c, b
+                | a, b, c when a <= c && c <= b -> Three(v0, v2, v1)
 
-                    //  b, a, c
-                    | a, b, c when b <= a && a <= c -> three(v1, v0, v2)
+                //  b, a, c
+                | a, b, c when b <= a && a <= c -> Three(v1, v0, v2)
 
-                    //  b, c, a
-                    | a, b, c when b <= c && c <= a -> three(v1, v2, v0)
+                //  b, c, a
+                | a, b, c when b <= c && c <= a -> Three(v1, v2, v0)
 
-                    //  c, b, a
-                    | a, b, c when c <= b && b <= a -> three(v2, v1, v0)
+                //  c, b, a
+                | a, b, c when c <= b && b <= a -> Three(v2, v1, v0)
 
-                    //  c, a, b
-                    | a, b, c when c <= a && a <= b -> three(v2, v0, v1)
+                //  c, a, b
+                | a, b, c when c <= a && a <= b -> Three(v2, v0, v1)
 
-                    // a, b, c left, thus already sorted
-                    | _ -> arr
-
-
-                | _ -> empty() // should never happen but don't want to throw there
-            | Many arr -> many(Array.sortInPlace getKey arr)
-
-        let inline private arr1 (v: 'v) = [| v |]
-        let inline private arr2 (v0: 'v, v1: 'v) = [| v0; v1 |]
-        let inline private arr3 (v0: 'v, v1: 'v, v2: 'v) = [| v0; v1; v2 |]
+                // a, b, c left, thus already sorted
+                | _ -> arr
+            | Two (v0, v1) when getKey v0 > getKey v1 -> Two (v1, v0)
+            | _ -> arr
 
         let toArray (arr: StackArray3<'v> inref) : 'v array =
             match arr with
-            | Few(size, v0, v1, v2) ->
-                match size with
-                | Size.Zero -> Array.empty
-                | Size.One -> arr1 v0
-                | Size.Two -> arr2(v0, v1)
-                | _ -> arr3(v0, v1, v2)
+            | Empty -> [||]
+            | One v0 -> [| v0 |]
+            | Two (v0, v1) -> [| v0; v1 |]
+            | Three (v0, v1, v2) -> [| v0; v1; v2 |]
             | Many arr -> arr
 
 
         let combine (a: StackArray3<'v>) (b: StackArray3<'v>) : StackArray3<'v> =
-            match (a, b) with
-            | Few(asize, a0, a1, a2), Few(bsize, b0, b1, b2) ->
-                match (asize, bsize) with
-                | Size.Zero, _ -> b
-                | _, Size.Zero -> a
-                | Size.One, Size.One -> two(a0, b0)
-                | Size.One, Size.Two -> three(a0, b0, b1)
-                | Size.Two, Size.One -> three(a0, a1, b0)
-                // now many cases
-                | Size.One, Size.Three -> many [| a0; b0; b1; b2 |]
-                | Size.Three, Size.One -> many [| a0; a1; a2; b0 |]
-                | Size.Two, Size.Two -> many [| a0; a1; b0; b1 |]
-                | Size.Three, Size.Two -> many [| a0; a1; a2; b0; b1 |]
-                | Size.Two, Size.Three -> many [| a0; a1; b0; b1; b2 |]
-                | Size.Three, Size.Three -> many [| a0; a1; a2; b0; b1; b2 |]
-                | _ -> a // this should never happen because we exhausted all the other cases
-            | Few _, Many arr2 -> many(Array.append (toArray &a) arr2) // TODO optimize
-            | Many arr1, Few _ -> many(Array.append arr1 (toArray &b)) // TODO optimize
-            | Many arr1, Many arr2 -> many(Array.append arr1 arr2)
-
-
-
-
+            match a, b with
+            | One v0, One v1 -> Two (v0, v1)
+            | One v0, Two (v1, v2)
+            | Two (v0, v1), One v2 -> Three (v0, v1, v2)
+            | Two (v0, v1), Two (v2, v3)
+            | One v0, Three (v1, v2, v3)
+            | Three (v0, v1, v2), One v3 -> Many [| v0; v1; v2; v3 |]
+            | Two (v0, v1), Three (v2, v3, v4)
+            | Three (v0, v1, v2), Two (v3, v4) -> Many [| v0; v1; v2; v3; v4 |]
+            | Three (v0, v1, v2), Three (v3, v4, v5) -> Many [| v0; v1; v2; v3; v4; v5 |]
+            | Empty, x
+            | x, Empty -> x
+            | Many arr1, Many arr2 -> Many (Array.append arr1 arr2)
+            | a, Many arr2 -> Many(Array.append (toArray &a) arr2) // TODO optimize
+            | Many arr1, b -> Many(Array.append arr1 (toArray &b)) // TODO optimize
 
 
     module MutStackArray1 =
@@ -649,7 +611,7 @@ module StackAllocatedCollections =
 
         let inline toArray (builder: DiffBuilder byref) ([<InlineIfLambda>] map: Op -> 't) : 't array =
             let len = lenght &builder
-            let res = Array.zeroCreate<'t> len
+            let res = GC.AllocateUninitializedArray<'t> (len, false)
 
             for i = 0 to len - 1 do
                 res[i] <- map(decode builder.ops[i])

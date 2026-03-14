@@ -54,13 +54,13 @@ module Program =
     let inline private define (init: 'arg -> 'model * Cmd<'msg>) (update: 'msg -> 'model -> 'model * Cmd<'msg>) =
         { Init = init
           Update = (fun (msg, model) -> update msg model)
-          Subscribe = fun _ -> Sub.none
+          Subscribe = fun _ -> []
           Logger = ProgramDefaults.defaultLogger()
           ExceptionHandler = ProgramDefaults.defaultExceptionHandler }
 
     /// Create a program using an MVU loop
     let stateful (init: 'arg -> 'model) (update: 'msg -> 'model -> 'model) =
-        define (fun arg -> init arg, Cmd.none) (fun msg model -> update msg model, Cmd.none)
+        define (fun arg -> init arg, []) (fun msg model -> update msg model, [])
 
     /// Create a program using an MVU loop
     let statefulWithCmd (init: 'arg -> 'model * Cmd<'msg>) (update: 'msg -> 'model -> 'model * Cmd<'msg>) = define init update

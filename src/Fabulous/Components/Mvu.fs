@@ -21,10 +21,10 @@ type MvuExtensions =
     static member Bind
         (_: ComponentBuilder<'parentMsg, 'marker>, fn: MvuRequest<'arg, 'model, 'msg>, continuation: 'model -> ComponentBodyBuilder<'msg, 'marker>)
         =
-        ComponentBodyBuilder<'msg, 'marker>(fun envContext treeContext context bindings ->
+        ComponentBodyBuilder<'msg, 'marker>(fun treeContext context bindings ->
             let key = int bindings
 
-            let struct (treeContext, state) =
+            let treeContext, state =
                 match context.TryGetValue(key) with
                 | ValueSome(ModelValue state) -> treeContext, state
                 | ValueNone ->
@@ -55,4 +55,4 @@ type MvuExtensions =
 
                     treeContext, state
 
-            (continuation state).Invoke(envContext, treeContext, context, bindings + 1<binding>))
+            (continuation state).Invoke(treeContext, context, bindings + 1<binding>))

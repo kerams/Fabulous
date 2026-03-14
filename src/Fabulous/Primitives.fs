@@ -1,4 +1,4 @@
-﻿(* Dev notes:
+(* Dev notes:
 
 The types in this file will be the ones used the most internally by Fabulous.
 
@@ -33,9 +33,6 @@ type WidgetAttributeKey = int<widgetAttributeKey>
 /// Key identifying a widget collection attribute (e.g. Children, Items, etc.)
 type WidgetCollectionAttributeKey = int<widgetCollectionAttributeKey>
 
-/// Key identifying an environment attribute (e.g. Theme, etc.)
-type EnvironmentAttributeKey = EnvironmentAttributeKey of string
-
 module ScalarAttributeKey =
     [<Struct>]
     type Kind =
@@ -44,20 +41,16 @@ module ScalarAttributeKey =
 
     module Code =
         [<Literal>]
-        // 1 <<< 30
-        let Boxed = 1073741824
+        let Boxed = 1 <<< 30
 
         [<Literal>]
-        // 2 <<< 30
-        let Inline = -2147483648
+        let Inline = 2 <<< 30
 
         [<Literal>]
-        // 3 <<< 30
-        let CodeMask = -1073741824
+        let CodeMask = 3 <<< 30
 
         [<Literal>]
-        // System.Int32.MaxValue >>> 2
-        let KeyMask = 536870911
+        let KeyMask = System.Int32.MaxValue >>> 2
 
     let inline getKind (key: ScalarAttributeKey) : Kind =
         match (int key) &&& Code.Inline with
@@ -83,9 +76,6 @@ module WidgetCollectionAttributeKey =
         let b = int b
         a.CompareTo b
 
-module EnvironmentAttributeKey =
-    let inline compare (EnvironmentAttributeKey a) (EnvironmentAttributeKey b) = a.CompareTo b
-
 type WidgetKey = int
 type StateKey = int
 type ViewAdapterKey = int
@@ -99,7 +89,7 @@ type ScalarAttribute =
         DebugName: string
 #endif
         /// Stores the value as object (boxed), prefer NumericValue when possible
-        Value: obj
+        Value: obj | null
         /// Stores the value in a numeric form for faster performance (no boxing)
         NumericValue: uint64
     }
@@ -120,17 +110,6 @@ and [<Struct>] WidgetCollectionAttribute =
 #endif
       Value: ArraySlice<Widget> }
 
-/// Represents an environment value of a widget
-and [<Struct>] EnvironmentAttribute =
-    {
-        Key: EnvironmentAttributeKey
-#if DEBUG
-        DebugName: string
-#endif
-        /// Stores the value as object (boxed)
-        Value: obj
-    }
-
 /// Represents a virtual UI element such as a Label, a Button, etc.
 and [<Struct>] Widget =
     { Key: WidgetKey
@@ -139,5 +118,4 @@ and [<Struct>] Widget =
 #endif
       ScalarAttributes: ScalarAttribute[]
       WidgetAttributes: WidgetAttribute[]
-      WidgetCollectionAttributes: WidgetCollectionAttribute[]
-      EnvironmentAttributes: EnvironmentAttribute[] }
+      WidgetCollectionAttributes: WidgetCollectionAttribute[] }
