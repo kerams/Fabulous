@@ -28,7 +28,7 @@ type ComponentContext(initialSize: int) =
         nextId
 
     let id = getNextId()
-    let values = ResizeArray initialSize
+    let mutable values = Array.zeroCreate initialSize
     let disposables = System.Collections.Generic.Dictionary<string, IDisposable>()
 
     let renderNeeded = Event<unit>()
@@ -41,8 +41,17 @@ type ComponentContext(initialSize: int) =
     member this.RenderNeeded = renderNeeded.Publish
     member this.NeedsRender() = renderNeeded.Trigger()
 
+    member private this.ResizeIfNeeded(count: int) =
+        // If the array is already big enough, we don't need to do anything
+        // Otherwise, we create a new array and copy the values from the old one
+        // It is assumed the component will have a stable amount of values, so this should not happen often
+        if values.Length < count then
+            let newArray = Array.zeroCreate (max (values.Length * 2) count)
+            Array.Copy (values, newArray, values.Length)
+            values <- newArray
+
     member this.TryGetValue<'T>(key: int) =
-        values.EnsureCapacity (key + 1) |> ignore
+        this.ResizeIfNeeded(key + 1)
 
         match values[key] with
         | null ->
@@ -77,7 +86,7 @@ type ComponentContext(initialSize: int) =
                 | :? IDisposable as d -> d.Dispose()
                 | _ -> ()
 
-            values.Clear ()
+            values <- [||]
 
 [<AbstractClass; Sealed>]
 type Context private () = class end
