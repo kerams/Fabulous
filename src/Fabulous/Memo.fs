@@ -45,7 +45,7 @@ module Memo =
 
             node.MemoizedWidget <- Some memoizedWidget
 
-            Reconciler.update node.TreeContext.CanReuseView prevWidget memoizedWidget node
+            Reconciler.update node.TreeContext.CanReuseView &prevWidget &memoizedWidget node
 
         | ValueNone -> ()
 
@@ -53,13 +53,13 @@ module Memo =
         SimpleScalarAttributeDefinition.CreateAttributeData(compareAttributes, updateNode)
         |> AttributeDefinitionStore.registerScalar
 
-    let inline private getMemoData (widget: Widget) : MemoData =
+    let private getMemoData (widget: inref<Widget>) : MemoData =
         match widget.ScalarAttributes with
         | [| attr |] -> attr.Value :?> MemoData
         | _ -> failwith "Memo widget cannot have extra attributes"
 
-    let internal canReuseMemoizedWidget prev next =
-        (getMemoData prev).MarkerType = (getMemoData next).MarkerType
+    let internal canReuseMemoizedWidget (prev: inref<Widget>) (next: inref<Widget>) =
+        (getMemoData &prev).MarkerType = (getMemoData &next).MarkerType
 
     let internal MemoAttribute: SimpleScalarAttributeDefinition<MemoData> =
         { Key = MemoAttributeKey
@@ -76,7 +76,7 @@ module Memo =
           CreateView =
             fun (widget, treeContext, parentNode) ->
 
-                let memoData = getMemoData widget
+                let memoData = getMemoData &widget
 
                 let memoizedWidget = memoData.CreateWidget memoData.KeyData
 

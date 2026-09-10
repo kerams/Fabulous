@@ -3,6 +3,7 @@ namespace Fabulous
 open System
 open System.Runtime.CompilerServices
 
+#if DEBUG
 type LogLevel =
     | Debug = 0
     | Info = 1
@@ -40,3 +41,4 @@ type LoggerExtensions =
     [<Extension>]
     static member inline Fatal(this: Logger, ex: exn) =
         LoggerExtensions.Log(this, LogLevel.Fatal, "{0}", ex.ToString())
+#endif

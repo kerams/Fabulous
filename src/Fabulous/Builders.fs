@@ -18,21 +18,21 @@ type WidgetBuilder<'msg, 'marker when 'msg: equality> =
             { Key = key
               Attributes = AttributesBundle(StackList.empty(), [||], [||]) }
 
-        new(key: WidgetKey, attributes: AttributesBundle) = { Key = key; Attributes = attributes }
+        new(key: WidgetKey, attributes: inref<AttributesBundle>) = { Key = key; Attributes = attributes }
 
-        new(key: WidgetKey, scalar: ScalarAttribute) =
+        new(key: WidgetKey, scalar: inref<ScalarAttribute>) =
             { Key = key
               Attributes = AttributesBundle(StackList.one scalar, [||], [||]) }
 
-        new(key: WidgetKey, scalarA: ScalarAttribute, scalarB: ScalarAttribute) =
+        new(key: WidgetKey, scalarA: inref<ScalarAttribute>, scalarB: inref<ScalarAttribute>) =
             { Key = key
               Attributes = AttributesBundle(StackList.two(scalarA, scalarB), [||], [||]) }
 
-        new(key: WidgetKey, scalar1: ScalarAttribute, scalar2: ScalarAttribute, scalar3: ScalarAttribute) =
+        new(key: WidgetKey, scalar1: inref<ScalarAttribute>, scalar2: inref<ScalarAttribute>, scalar3: inref<ScalarAttribute>) =
             { Key = key
               Attributes = AttributesBundle(StackList.three(scalar1, scalar2, scalar3), [||], [||]) }
 
-        new(key: WidgetKey, widget: WidgetAttribute) =
+        new(key: WidgetKey, widget: inref<WidgetAttribute>) =
             { Key = key
               Attributes = AttributesBundle(StackList.empty(), [| widget |], [||]) }
 
@@ -67,9 +67,11 @@ type WidgetBuilder<'msg, 'marker when 'msg: equality> =
             let struct (scalarAttributes, widgetAttributes, widgetCollectionAttributes) =
                 x.Attributes
 
+            let atts = struct (StackList.add(&scalarAttributes, &attr), widgetAttributes, widgetCollectionAttributes)
+
             WidgetBuilder<'msg, 'marker>(
                 x.Key,
-                struct (StackList.add(&scalarAttributes, attr), widgetAttributes, widgetCollectionAttributes)
+                &atts
             )
 
         [<EditorBrowsable(EditorBrowsableState.Never)>]
@@ -85,10 +87,11 @@ type WidgetBuilder<'msg, 'marker when 'msg: equality> =
             match StackList.tryFind(&scalarAttributes, (fun attr -> attr.Key = attrKey)) with
             | ValueNone ->
                 let attr = defaultWith()
+                let atts = struct (StackList.add(&scalarAttributes, &attr), widgetAttributes, widgetCollectionAttributes)
 
                 WidgetBuilder<'msg, 'marker>(
                     x.Key,
-                    struct (StackList.add(&scalarAttributes, attr), widgetAttributes, widgetCollectionAttributes)
+                    &atts
                 )
 
             | ValueSome attr ->
@@ -97,10 +100,11 @@ type WidgetBuilder<'msg, 'marker when 'msg: equality> =
                 let newAttrs =
                     StackList.replace(&scalarAttributes, (fun attr -> attr.Key = attrKey), newAttr)
 
-                WidgetBuilder<'msg, 'marker>(x.Key, struct (newAttrs, widgetAttributes, widgetCollectionAttributes))
+                let atts = struct (newAttrs, widgetAttributes, widgetCollectionAttributes)
+                WidgetBuilder<'msg, 'marker>(x.Key, &atts)
 
         [<EditorBrowsable(EditorBrowsableState.Never)>]
-        member x.AddWidget(attr: WidgetAttribute) =
+        member x.AddWidget(attr: inref<WidgetAttribute>) =
             let struct (scalarAttributes, widgetAttributes, widgetCollectionAttributes) =
                 x.Attributes
 
@@ -111,10 +115,11 @@ type WidgetBuilder<'msg, 'marker when 'msg: equality> =
                 | [||] -> [| attr |]
                 | attribs -> Array.appendOne attr attribs
 
-            WidgetBuilder<'msg, 'marker>(x.Key, struct (scalarAttributes, res, widgetCollectionAttributes))
+            let atts = struct (scalarAttributes, res, widgetCollectionAttributes)
+            WidgetBuilder<'msg, 'marker>(x.Key, &atts)
 
         [<EditorBrowsable(EditorBrowsableState.Never)>]
-        member x.AddWidgetCollection(attr: WidgetCollectionAttribute) =
+        member x.AddWidgetCollection(attr: inref<WidgetCollectionAttribute>) =
             let struct (scalarAttributes, widgetAttributes, widgetCollectionAttributes) =
                 x.Attributes
 
@@ -125,7 +130,8 @@ type WidgetBuilder<'msg, 'marker when 'msg: equality> =
                 | [||] -> [| attr |]
                 | attribs -> Array.appendOne attr attribs
 
-            WidgetBuilder<'msg, 'marker>(x.Key, struct (scalarAttributes, widgetAttributes, res))
+            let atts = struct (scalarAttributes, widgetAttributes, res)
+            WidgetBuilder<'msg, 'marker>(x.Key, &atts)
 
     end
 
@@ -181,10 +187,11 @@ type CollectionBuilder<'msg, 'marker, 'itemMarker when 'msg: equality> =
                 | [||] -> [| widgetCollAttr |]
                 | widgetCollectionAttributes -> Array.appendOne widgetCollAttr widgetCollectionAttributes
 
-            WidgetBuilder<'msg, 'marker>(x.WidgetKey, AttributesBundle(scalars, widgets, widgetCollections))
+            let atts = AttributesBundle(scalars, widgets, widgetCollections)
+            WidgetBuilder<'msg, 'marker>(x.WidgetKey, &atts)
 
         member inline _.Combine(a: Content<'msg>, b: Content<'msg>) : Content<'msg> =
-            let res = MutStackArray1.combineMut(&a.Widgets, b.Widgets)
+            let res = MutStackArray1.combineMut(&a.Widgets, &b.Widgets)
 
             { Widgets = res }
 
@@ -211,20 +218,20 @@ type CollectionBuilder<'msg, 'marker, 'itemMarker when 'msg: equality> =
                 |> MutStackArray1.fromArray }
 
         [<EditorBrowsable(EditorBrowsableState.Never)>]
-        member inline x.AddScalar(attr: ScalarAttribute) =
+        member inline x.AddScalar(attr: inref<ScalarAttribute>) =
             let struct (scalarAttributes, widgetAttributes, widgetCollectionAttributes) =
                 x.Attributes
 
             CollectionBuilder<'msg, 'marker, 'itemMarker>(
                 x.WidgetKey,
                 x.Attr,
-                struct (StackList.add(&scalarAttributes, attr), widgetAttributes, widgetCollectionAttributes)
+                struct (StackList.add(&scalarAttributes, &attr), widgetAttributes, widgetCollectionAttributes)
             )
 
     end
 
 module CollectionBuilder =
-    let inline yieldImpl (builder: WidgetBuilder<'msg, 'itemMarker>) : Content<'msg> =
+    let inline yieldImpl (builder: inref<WidgetBuilder<'msg, 'itemMarker>>) : Content<'msg> =
         { Widgets = MutStackArray1.One(builder.Compile()) }
 
 [<Struct>]
@@ -233,7 +240,7 @@ type AttributeCollectionBuilder<'msg, 'marker, 'itemMarker when 'msg: equality> 
         val Widget: WidgetBuilder<'msg, 'marker>
         val Attr: WidgetCollectionAttributeDefinition
 
-        new(widget: WidgetBuilder<'msg, 'marker>, attr: WidgetCollectionAttributeDefinition) = { Widget = widget; Attr = attr }
+        new(widget: inref<WidgetBuilder<'msg, 'marker>>, attr: inref<WidgetCollectionAttributeDefinition>) = { Widget = widget; Attr = attr }
 
         member inline x.Run(c: Content<'msg>) =
             let attrValue =
@@ -241,10 +248,11 @@ type AttributeCollectionBuilder<'msg, 'marker, 'itemMarker when 'msg: equality> 
                 | ValueNone -> ArraySlice.emptyWithNull()
                 | ValueSome slice -> slice
 
-            x.Widget.AddWidgetCollection(x.Attr.WithValue(attrValue))
+            let w = x.Attr.WithValue(attrValue)
+            x.Widget.AddWidgetCollection &w
 
         member inline _.Combine(a: Content<'msg>, b: Content<'msg>) : Content<'msg> =
-            { Widgets = MutStackArray1.combineMut(&a.Widgets, b.Widgets) }
+            { Widgets = MutStackArray1.combineMut(&a.Widgets, &b.Widgets) }
 
         member inline _.Zero() : Content<'msg> = { Widgets = MutStackArray1.Empty }
 

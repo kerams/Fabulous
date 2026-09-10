@@ -147,18 +147,20 @@ module Cmd =
 
                       cts <- new CancellationTokenSource()
 
-                      Async.Start(
-                          async {
-                              do! Async.Sleep(timeout)
+                      backgroundTask {
+                          do! Task.Delay (timeout, cts.Token)
 
-                              lock funLock (fun () ->
-                                  dispatch(fn value)
+                          lock funLock (fun () ->
+                              dispatch(fn value)
 
-                                  match cts with
-                                  | null -> ()
-                                  | cts ->
-                                      cts.Cancel()
-                                      cts.Dispose())
-                          },
-                          (Unchecked.nonNull cts).Token
-                      )) ]
+                              match cts with
+                              | null -> ()
+                              | cts' ->
+                                  cts'.Cancel()
+                                  cts'.Dispose()
+                                  cts <- null
+                          )
+                      }
+                      |> ignore
+                  )
+            ]

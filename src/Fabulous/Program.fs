@@ -13,7 +13,9 @@ type Program<'arg, 'model, 'msg> =
         /// Add a subscription that can dispatch messages
         Subscribe: 'model -> Sub<'msg>
         /// Configuration for logging all output messages from Fabulous
+#if DEBUG
         Logger: Logger
+#endif
         /// Exception handler for all uncaught exceptions happening in the MVU loop.
         /// Returns true if the exception was handled, false otherwise.
         ExceptionHandler: exn -> bool
@@ -24,13 +26,12 @@ type Program<'arg, 'model, 'msg, 'marker when 'msg: equality> =
         State: Program<'arg, 'model, 'msg>
         /// Render the application state
         View: 'model -> WidgetBuilder<'msg, 'marker>
-        /// Indicates if a previous Widget's view can be reused
-        CanReuseView: Widget -> Widget -> bool
         /// Runs the View function on the main thread
         SyncAction: (unit -> unit) -> unit
     }
 
 module ProgramDefaults =
+#if DEBUG
     let defaultLogger () =
         let log (level, message) =
             let traceLevel =
@@ -45,6 +46,7 @@ module ProgramDefaults =
 
         { Log = log
           MinLogLevel = LogLevel.Error }
+#endif
 
     let defaultExceptionHandler exn =
         Trace.WriteLine(String.Format("Unhandled exception: {0}", exn.ToString()), "Debug")
@@ -55,7 +57,9 @@ module Program =
         { Init = init
           Update = (fun (msg, model) -> update msg model)
           Subscribe = fun _ -> []
+#if DEBUG
           Logger = ProgramDefaults.defaultLogger()
+#endif
           ExceptionHandler = ProgramDefaults.defaultExceptionHandler }
 
     /// Create a program using an MVU loop
@@ -80,29 +84,31 @@ module Program =
         { program with
             Subscribe = map program.Subscribe }
 
+#if DEBUG
     /// Configure how the output messages from Fabulous will be handled
     let withLogger (logger: Logger) (program: Program<'arg, 'model, 'msg>) = { program with Logger = logger }
+#endif
 
     /// Trace all the updates to the debug output
     let withTrace (trace: string * string -> unit) (program: Program<'arg, 'model, 'msg>) =
         let traceInit arg =
             try
                 let initModel, cmd = program.Init(arg)
-                trace("Initial model: {0}", $"%0A{initModel}")
+                trace("Initial model: {0}", initModel.ToString())
                 initModel, cmd
             with e ->
-                trace("Error in init function: {0}", $"%0A{e}")
+                trace("Error in init function: {0}", e.ToString())
                 reraise()
 
         let traceUpdate (msg, model) =
-            trace("Message: {0}", $"%0A{msg}")
+            trace("Message: {0}", msg.ToString())
 
             try
                 let newModel, cmd = program.Update(msg, model)
-                trace("Updated model: {0}", $"%0A{newModel}")
+                trace("Updated model: {0}", newModel.ToString())
                 newModel, cmd
             with e ->
-                trace("Error in model function: {0}", $"%0A{e}")
+                trace("Error in model function: {0}", e.ToString())
                 reraise()
 
         { program with

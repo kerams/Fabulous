@@ -34,7 +34,9 @@ type ViewRef(onAttached, onDetached) =
 type ViewTreeContext =
     { CanReuseView: Widget -> Widget -> bool
       GetViewNode: obj -> IViewNode
+#if DEBUG
       Logger: Logger
+#endif
       Dispatch: obj -> unit
       SyncAction: (unit -> unit) -> unit
       GetComponent: obj -> obj

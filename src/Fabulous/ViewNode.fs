@@ -19,7 +19,7 @@ type ViewNode =
     // ViewNode is supposed to be mutable, stateful and persistent object
     val handlers: Dictionary<string, IDisposable>
 
-    new(parent: IViewNode option, treeContext: ViewTreeContext, target: WeakReference) =
+    new(parent: IViewNode option, treeContext: inref<ViewTreeContext>, target: WeakReference) =
         { parent = parent
           treeContext = treeContext
           targetRef = target

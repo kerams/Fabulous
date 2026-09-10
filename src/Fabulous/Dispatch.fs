@@ -29,36 +29,36 @@ module Dispatcher =
         if canDispatch then
             node.TreeContext.Dispatch(mapMsg msg)
 
+    let rec dispatchAndVisitChildren (definition: inref<SimpleScalarAttributeDefinition<'t>>) skipMapMsg dispatch (widget: inref<Widget>) =
+        // Check if the current widget has a MapMsg function and apply it before dispatch
+        let dispatch =
+            if skipMapMsg then
+                dispatch
+            else
+                match AttributeHelpers.tryFindSimpleScalarAttribute MapMsg.MapMsg &widget with
+                | ValueNone -> dispatch
+                | ValueSome fn -> fn >> dispatch
+
+        match AttributeHelpers.tryFindSimpleScalarAttribute definition &widget with
+        | ValueNone -> ()
+        | ValueSome msg -> dispatch msg
+
+        match widget.WidgetAttributes with
+        | [||] -> ()
+        | widgetAttrs ->
+            for childAttr in widgetAttrs do
+                dispatchAndVisitChildren &definition false dispatch &childAttr.Value
+
+        match widget.WidgetCollectionAttributes with
+        | [||] -> ()
+        | widgetCollAttrs ->
+            for widgetCollAttr in widgetCollAttrs do
+                for childWidget in ArraySlice.toSpan widgetCollAttr.Value do
+                    dispatchAndVisitChildren &definition false dispatch &childWidget
+
     /// Trigger an event for the node and all its descendants declaring the given event definition
-    let dispatchEventForAllChildren (node: IViewNode) (rootWidget: Widget) (definition: SimpleScalarAttributeDefinition<obj>) =
-        let rec dispatchAndVisitChildren skipMapMsg dispatch widget =
-            // Check if the current widget has a MapMsg function and apply it before dispatch
-            let dispatch =
-                if skipMapMsg then
-                    dispatch
-                else
-                    match AttributeHelpers.tryFindSimpleScalarAttribute MapMsg.MapMsg widget with
-                    | ValueNone -> dispatch
-                    | ValueSome fn -> fn >> dispatch
-
-            match AttributeHelpers.tryFindSimpleScalarAttribute definition widget with
-            | ValueNone -> ()
-            | ValueSome msg -> dispatch msg
-
-            match widget.WidgetAttributes with
-            | [||] -> ()
-            | widgetAttrs ->
-                for childAttr in widgetAttrs do
-                    dispatchAndVisitChildren false dispatch childAttr.Value
-
-            match widget.WidgetCollectionAttributes with
-            | [||] -> ()
-            | widgetCollAttrs ->
-                for widgetCollAttr in widgetCollAttrs do
-                    for childWidget in ArraySlice.toSpan widgetCollAttr.Value do
-                        dispatchAndVisitChildren false dispatch childWidget
-
+    let dispatchEventForAllChildren (node: IViewNode) (rootWidget: inref<Widget>) (definition: SimpleScalarAttributeDefinition<obj>) =
         let struct (canDispatch, mapMsg) = getCanDispatchAndMapMsg node
 
         if canDispatch then
-            dispatchAndVisitChildren true (mapMsg >> node.TreeContext.Dispatch) rootWidget
+            dispatchAndVisitChildren &definition true (mapMsg >> node.TreeContext.Dispatch) &rootWidget

@@ -43,4 +43,5 @@ type ComponentBuilder<'parentMsg, 'marker when 'parentMsg: equality> =
 
         let data = { Key = this.Key; Body = compiledBody }
 
-        WidgetBuilder<'parentMsg, 'marker>(Component'.WidgetKey, Component'.Data.WithValue(data))
+        let cdata = Component'.Data.WithValue(data)
+        WidgetBuilder<'parentMsg, 'marker>(Component'.WidgetKey, &cdata)

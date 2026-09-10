@@ -9,11 +9,15 @@ open System
 open System.Collections.Generic
 open System.Runtime.CompilerServices
 
-#nowarn "9"
+#nowarn 9
 
 type ArraySlice<'v> = (struct (uint16 * 'v array))
 
 module ArraySlice =
+    let inline length (a: ArraySlice<'v>) =
+        let struct (size, _) = a
+        int size
+
     let inline toSpan (a: ArraySlice<'v>) =
         let struct (size, arr) = a
 
@@ -156,7 +160,7 @@ module StackAllocatedCollections =
 
                         arr
 
-                static member add(data: StackList<'v> inref, v: 'v) =
+                static member add(data: StackList<'v> inref, v: inref<'v>) =
                     let length = data.size
                     let struct (v0, v1, _) = data.items
 
@@ -311,7 +315,7 @@ module StackAllocatedCollections =
             match arr with
             | Many arr -> Many(Array.sortInPlace getKey arr)
             | Three (v0, v1, v2) ->
-                match (getKey v0, getKey v1, getKey v1) with
+                match (getKey v0, getKey v1, getKey v2) with
                 // abc acb bac bca cba cab
 
                 //  a, c, b
@@ -417,7 +421,7 @@ module StackAllocatedCollections =
             | One _ -> 1
             | Many(struct (count, _)) -> int count
 
-        let combineMut (a: T<'v> inref, b: T<'v>) : T<'v> =
+        let combineMut (a: T<'v> inref, b: T<'v> inref) : T<'v> =
             match b with
             | Empty -> a
             | One bv -> addMut(&a, bv)

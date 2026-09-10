@@ -1,4 +1,4 @@
-﻿namespace Fabulous
+namespace Fabulous
 
 module ScalarAttributeDefinitions =
     /// A small scalar attribute.
@@ -199,7 +199,8 @@ module AttributeDefinitionStore =
 module AttributeHelpers =
     open ScalarAttributeDefinitions
 
-    let tryFindSimpleScalarAttribute (definition: SimpleScalarAttributeDefinition<'T>) (widget: Widget) =
-        match widget.ScalarAttributes |> Array.tryFind(fun attr -> attr.Key = definition.Key) with
+    let tryFindSimpleScalarAttribute (definition: SimpleScalarAttributeDefinition<'T>) (widget: inref<Widget>) =
+        let key = definition.Key
+        match widget.ScalarAttributes |> Array.tryFind(fun attr -> attr.Key = key) with
         | None -> ValueNone
         | Some attr -> ValueSome(unbox<'T> attr.Value)

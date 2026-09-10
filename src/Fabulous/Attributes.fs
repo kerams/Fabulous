@@ -9,9 +9,8 @@ open Fabulous.WidgetCollectionAttributeDefinitions
 module Helpers =
     let canReuse<'T when 'T: equality> (prev: 'T) (curr: 'T) = prev = curr
 
-    let inline createViewForWidget (parent: IViewNode) (widget: Widget) =
+    let createViewForWidget (parent: IViewNode) (widget: inref<Widget>) =
         let widgetDefinition = WidgetDefinitionStore.get widget.Key
-
         widgetDefinition.CreateView(widget, parent.TreeContext, ValueSome parent)
 
 module ScalarAttributeComparers =
@@ -185,7 +184,7 @@ module Attributes =
         { Key = key; Name = name }
 
     /// Define an attribute storing a Widget for a CLR property
-    let inline definePropertyWidget<'T when 'T: null> (name: string) ([<InlineIfLambda>] get: obj -> obj) ([<InlineIfLambda>] set: obj -> 'T -> unit) =
+    let definePropertyWidget<'T when 'T: null> (name: string) (get: obj -> obj) (set: obj -> 'T -> unit) =
         let applyDiff (diff: WidgetDiff) (node: IViewNode) =
             let childView = get node.Target
 
@@ -196,22 +195,22 @@ module Attributes =
         let updateNode (oldValueOpt: Widget voption) (newValueOpt: Widget voption) (node: IViewNode) =
             if oldValueOpt.IsSome then
                 // Dispose the existing child if it exists
-                let childView = get node.Target
-
-                if not(isNull childView) then
+                match get node.Target with
+                | null -> ()
+                | childView ->
                     let childNode = node.TreeContext.GetViewNode(childView)
                     childNode.Dispose()
 
             match newValueOpt with
             | ValueNone -> set node.Target null
             | ValueSome widget ->
-                let struct (_, view) = Helpers.createViewForWidget node widget
+                let struct (_, view) = Helpers.createViewForWidget node &widget
                 set node.Target (unbox view)
 
         defineWidget name applyDiff updateNode
 
     /// Define an attribute storing a collection of Widget for a List<T> property
-    let inline defineListWidgetCollection<'itemType> name ([<InlineIfLambda>] getCollection: obj -> System.Collections.Generic.IList<'itemType>) =
+    let defineListWidgetCollection<'itemType> name (getCollection: obj -> System.Collections.Generic.IList<'itemType>) =
         let applyDiff _ (diffs: WidgetCollectionItemChanges) (node: IViewNode) =
             let targetColl = getCollection node.Target
 
@@ -221,7 +220,7 @@ module Attributes =
                     let itemNode = node.TreeContext.GetViewNode(box targetColl[index])
 
                     // Trigger the unmounted event
-                    Dispatcher.dispatchEventForAllChildren itemNode widget Lifecycle.Unmounted
+                    Dispatcher.dispatchEventForAllChildren itemNode &widget Lifecycle.Unmounted
                     itemNode.Dispose()
 
                     // Remove the child from the UI tree
@@ -232,13 +231,13 @@ module Attributes =
             for diff in diffs do
                 match diff with
                 | WidgetCollectionItemChange.Insert(index, widget) ->
-                    let struct (itemNode, view) = Helpers.createViewForWidget node widget
+                    let struct (itemNode, view) = Helpers.createViewForWidget node &widget
 
                     // Insert the new child into the UI tree
                     targetColl.Insert(index, unbox view)
 
                     // Trigger the mounted event
-                    Dispatcher.dispatchEventForAllChildren itemNode widget Lifecycle.Mounted
+                    Dispatcher.dispatchEventForAllChildren itemNode &widget Lifecycle.Mounted
 
                 | WidgetCollectionItemChange.Update(index, widgetDiff) ->
                     let childNode = node.TreeContext.GetViewNode(box targetColl[index])
@@ -248,32 +247,31 @@ module Attributes =
                 | WidgetCollectionItemChange.Replace(index, oldWidget, newWidget) ->
                     let prevItemNode = node.TreeContext.GetViewNode(box targetColl[index])
 
-                    let struct (nextItemNode, view) = Helpers.createViewForWidget node newWidget
+                    let struct (nextItemNode, view) = Helpers.createViewForWidget node &newWidget
 
                     // Trigger the unmounted event for the old child
-                    Dispatcher.dispatchEventForAllChildren prevItemNode oldWidget Lifecycle.Unmounted
+                    Dispatcher.dispatchEventForAllChildren prevItemNode &oldWidget Lifecycle.Unmounted
                     prevItemNode.Dispose()
 
                     // Replace the existing child in the UI tree at the index with the new one
                     targetColl[index] <- unbox view
 
                     // Trigger the mounted event for the new child
-                    Dispatcher.dispatchEventForAllChildren nextItemNode newWidget Lifecycle.Mounted
+                    Dispatcher.dispatchEventForAllChildren nextItemNode &newWidget Lifecycle.Mounted
 
                 | _ -> ()
 
         let updateNode (oldValueOpt: ArraySlice<Widget> voption) (newValueOpt: ArraySlice<Widget> voption) (node: IViewNode) =
             let targetColl = getCollection node.Target
 
-            if oldValueOpt.IsSome then
+            match oldValueOpt with
+            | ValueNone -> ()
+            | ValueSome oldValue ->
                 // Dispose the existing children if they exist
-                let oldWidgets = oldValueOpt.Value
-                let span = ArraySlice.toSpan oldWidgets
-
-                for index = 0 to span.Length do
-                    let childView = box targetColl[index]
-
-                    if not(isNull childView) then
+                for index = 0 to ArraySlice.length oldValue - 1 do
+                    match box targetColl[index] with
+                    | null -> ()
+                    | childView ->
                         let childNode = node.TreeContext.GetViewNode(childView)
                         childNode.Dispose()
 
@@ -283,7 +281,7 @@ module Attributes =
             | ValueNone -> ()
             | ValueSome widgets ->
                 for widget in ArraySlice.toSpan widgets do
-                    let struct (_, view) = Helpers.createViewForWidget node widget
+                    let struct (_, view) = Helpers.createViewForWidget node &widget
 
                     targetColl.Add(unbox view)
 
@@ -324,10 +322,7 @@ module Attributes =
             { Key = key; Name = name }
 
         /// Define an attribute for EventHandler<'T>
-        let inline defineEvent<'args>
-            name
-            ([<InlineIfLambda>] getEvent: obj -> IEvent<EventHandler<'args>, 'args>)
-            : SimpleScalarAttributeDefinition<'args -> MsgValue> =
+        let defineEvent<'args> name (getEvent: obj -> IEvent<EventHandler<'args>, 'args>) : SimpleScalarAttributeDefinition<'args -> MsgValue> =
             let key =
                 SimpleScalarAttributeDefinition.CreateAttributeData(
                     ScalarAttributeComparers.noCompare,
@@ -353,7 +348,7 @@ module Attributes =
             { Key = key; Name = name }
 
     module Component =
-        let inline defineEventNoArg name ([<InlineIfLambda>] getEvent: obj -> IEvent<EventHandler, EventArgs>) : SimpleScalarAttributeDefinition<unit -> unit> =
+        let defineEventNoArg name (getEvent: obj -> IEvent<EventHandler, EventArgs>) : SimpleScalarAttributeDefinition<unit -> unit> =
             let key =
                 SimpleScalarAttributeDefinition.CreateAttributeData(
                     ScalarAttributeComparers.noCompare,
@@ -373,10 +368,7 @@ module Attributes =
 
             { Key = key; Name = name }
 
-        let inline defineEvent<'args>
-            name
-            ([<InlineIfLambda>] getEvent: obj -> IEvent<EventHandler<'args>, 'args>)
-            : SimpleScalarAttributeDefinition<'args -> unit> =
+        let defineEvent<'args> name (getEvent: obj -> IEvent<EventHandler<'args>, 'args>) : SimpleScalarAttributeDefinition<'args -> unit> =
             let key =
                 SimpleScalarAttributeDefinition.CreateAttributeData(
                     ScalarAttributeComparers.noCompare,

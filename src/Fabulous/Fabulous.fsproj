@@ -4,6 +4,7 @@
     <PackageId>Fabulous</PackageId>
     <IsPackable>true</IsPackable>
     <Nullable>enable</Nullable>
+    <OtherFlags>$(OtherFlags) --reflectionfree</OtherFlags>
   </PropertyGroup>
   <!-- NuGet Package -->
   <PropertyGroup>

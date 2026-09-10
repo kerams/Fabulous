@@ -24,7 +24,7 @@ type Component
     let mutable _isReadyForRenderRequest = false
     let mutable _pendingRenderRequested = false
 
-    member private this.MergeAttributes(rootWidget: Widget, componentWidgetOpt: Widget voption) =
+    member private this.MergeAttributes(rootWidget: inref<Widget>, componentWidgetOpt: inref<Widget voption>) =
         match componentWidgetOpt with
         | ValueNone ->
             struct (rootWidget.ScalarAttributes, rootWidget.WidgetAttributes, rootWidget.WidgetCollectionAttributes)
@@ -62,7 +62,7 @@ type Component
 
             struct (scalars, widgets, widgetColls)
 
-    member this.CreateView(componentWidget: Widget voption) =
+    member this.CreateView(componentWidget: inref<Widget voption>) =
         _isReadyForRenderRequest <- false
         _contextSubscription <- _context.RenderNeeded.Subscribe(this.Render)
 
@@ -74,7 +74,7 @@ type Component
         _context <- context
 
         let struct (scalars, widgets, widgetColls) =
-            this.MergeAttributes(rootWidget, componentWidget)
+            this.MergeAttributes(&rootWidget, &componentWidget)
 
         let rootWidget: Widget =
             { Key = rootWidget.Key
@@ -102,7 +102,7 @@ type Component
 
         struct (node, view)
 
-    member this.AttachView(componentWidget: Widget, view: obj) =
+    member this.AttachView(componentWidget: inref<Widget>, view: obj) =
         _isReadyForRenderRequest <- false
         _contextSubscription <- _context.RenderNeeded.Subscribe(this.Render)
 
@@ -112,9 +112,10 @@ type Component
         _widget <- rootWidget
         _treeContext <- treeContext
         _context <- context
+        let w = ValueSome componentWidget
 
         let struct (scalars, widgets, widgetColls) =
-            this.MergeAttributes(rootWidget, ValueSome componentWidget)
+            this.MergeAttributes(&rootWidget, &w)
 
         let rootWidget: Widget =
             { Key = rootWidget.Key
@@ -163,7 +164,8 @@ type Component
 
             let viewNode = treeContext.GetViewNode _view
 
-            Reconciler.update treeContext.CanReuseView (ValueSome prevRootWidget) currRootWidget viewNode
+            let prev = ValueSome prevRootWidget
+            Reconciler.update treeContext.CanReuseView &prev &currRootWidget viewNode
 
     member this.Dispose() =
         if not(isNull _contextSubscription) then

@@ -22,7 +22,8 @@ module Component' =
 
                     let context = new ComponentContext()
                     let comp = new Component(Data.Key, treeContext, context, data.Body)
-                    let struct (node, view) = comp.CreateView(ValueSome widget)
+                    let w = ValueSome widget
+                    let struct (node, view) = comp.CreateView(&w)
 
                     treeContext.SetComponent comp view
 
@@ -36,7 +37,7 @@ module Component' =
 
                     let context = new ComponentContext()
                     let comp = new Component(Data.Key, treeContext, context, data.Body)
-                    let node = comp.AttachView(widget, view)
+                    let node = comp.AttachView(&widget, view)
 
                     treeContext.SetComponent comp view
 
@@ -45,15 +46,15 @@ module Component' =
         WidgetDefinitionStore.set key definition
         key
 
-    let canReuseComponent (prev: Widget) (curr: Widget) =
+    let canReuseComponent (prev: inref<Widget>) (curr: inref<Widget>) =
         let prevData =
             match prev.ScalarAttributes |> Array.tryFind(fun scalarAttr -> scalarAttr.Key = Data.Key) with
-            | None -> failwithf "Component widget must have a body"
+            | None -> failwith "Component widget must have a body"
             | Some value -> value.Value :?> ComponentData
 
         let currData =
             match curr.ScalarAttributes |> Array.tryFind(fun scalarAttr -> scalarAttr.Key = Data.Key) with
-            | None -> failwithf "Component widget must have a body"
+            | None -> failwith "Component widget must have a body"
             | Some value -> value.Value :?> ComponentData
 
         // NOTE: Somehow using = here crashes the app and prevents debugging...
