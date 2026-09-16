@@ -9,10 +9,8 @@ module MapMsg =
         let key =
             SimpleScalarAttributeDefinition.CreateAttributeData(
                 (fun _ _ -> ScalarAttributeComparison.Different),
-                (fun _oldValueOpt newValueOpt node ->
-                    match newValueOpt with
-                    | ValueNone -> node.MapMsg <- None
-                    | ValueSome fn -> node.MapMsg <- Some fn)
+                (fun _oldValue (newValue: ScalarValue<obj -> obj>) node ->
+                    node.MapMsg <- if newValue.HasValue then Some newValue.Value else None)
             )
             |> AttributeDefinitionStore.registerScalar
 

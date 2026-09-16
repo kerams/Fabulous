@@ -19,8 +19,8 @@ module TestUI_Attributes =
                         let btn = node.Target :?> IButton
 
                         match node.TryGetHandler(name) with
-                        | ValueNone -> ()
-                        | ValueSome handler -> handler.Dispose()
+                        | null -> ()
+                        | handler -> handler.Dispose()
 
                         match newValueOpt with
                         | ValueNone -> node.RemoveHandler(name)
@@ -49,8 +49,8 @@ module TestUI_Attributes =
                         let btn = node.Target :?> IButton
 
                         match node.TryGetHandler(name) with
-                        | ValueNone -> ()
-                        | ValueSome handler -> handler.Dispose()
+                        | null -> ()
+                        | handler -> handler.Dispose()
 
                         match newValueOpt with
                         | ValueNone -> node.RemoveHandler(name)
@@ -79,8 +79,8 @@ module TestUI_Attributes =
                         let btn = node.Target :?> IButton
 
                         match node.TryGetHandler(name) with
-                        | ValueNone -> ()
-                        | ValueSome handler -> handler.Dispose()
+                        | null -> ()
+                        | handler -> handler.Dispose()
 
                         match newValueOpt with
                         | ValueNone -> node.RemoveHandler(name)
@@ -109,8 +109,8 @@ module TestUI_Attributes =
                         let btn = node.Target :?> IContainer
 
                         match node.TryGetHandler(name) with
-                        | ValueNone -> ()
-                        | ValueSome handler -> handler.Dispose()
+                        | null -> ()
+                        | handler -> handler.Dispose()
 
                         match newValueOpt with
                         | ValueNone -> node.RemoveHandler(name)

@@ -33,9 +33,9 @@ module Memo =
             | false -> ScalarAttributeComparison.Different
         | _ -> ScalarAttributeComparison.Different
 
-    let inline private updateNode _ (data: MemoData voption) (node: IViewNode) : unit =
-        match data with
-        | ValueSome memoData ->
+    let inline private updateNode _ (data: ScalarValue<MemoData>) (node: IViewNode) : unit =
+        if data.HasValue then
+            let memoData = data.Value
             let memoizedWidget = memoData.CreateWidget memoData.KeyData
 
             let prevWidget =
@@ -46,8 +46,6 @@ module Memo =
             node.MemoizedWidget <- Some memoizedWidget
 
             Reconciler.update node.TreeContext.CanReuseView &prevWidget &memoizedWidget node
-
-        | ValueNone -> ()
 
     let private MemoAttributeKey =
         SimpleScalarAttributeDefinition.CreateAttributeData(compareAttributes, updateNode)

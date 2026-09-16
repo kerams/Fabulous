@@ -16,8 +16,16 @@ module Helpers =
 module ScalarAttributeComparers =
     let inline noCompare _ _ = ScalarAttributeComparison.Different
 
-    let inline equalityCompare a b =
-        if a = b then
+    let inline equalityCompare (a: 'T) (b: 'T) =
+        // F# (=) on a generic 'T compiles to FSharp.Core's comparer machinery, instantiated per value type under
+        // NativeAOT. Value types get the BCL comparer instead; reference types keep (=), whose shared code also
+        // compares arrays element-wise at runtime (classes and item sources are often freshly built arrays).
+        if
+            (if typeof<'T>.IsValueType then
+                 System.Collections.Generic.EqualityComparer<'T>.Default.Equals(a, b)
+             else
+                 a = b)
+        then
             ScalarAttributeComparison.Identical
         else
             ScalarAttributeComparison.Different
@@ -89,12 +97,100 @@ type SimpleScalarAttributeDefinitionExtensions() =
     static member inline WithValue(this: SimpleScalarAttributeDefinition<'args -> MsgValue>, value: 'args -> 'msg) =
         this.WithValue(value >> box >> Unchecked.nonNull >> MsgValue)
 
+/// The node's registration for one event attribute: subscribed to the event once, forwarding to whatever handler the
+/// latest render supplied. Re-rendering only swaps Handler, instead of disposing and re-subscribing every time.
+[<Sealed; AllowNullLiteral>]
+type EventHandlerSlot(handler: obj) =
+    member val Handler = handler with get, set
+
+    /// Set while the attribute itself changes the target, so the change it causes is not reported back as an event
+    member val Suppressed = false with get, set
+
+    member val Subscription: IDisposable | null = null with get, set
+
+    interface IDisposable with
+        member this.Dispose() =
+            match this.Subscription with
+            | null -> ()
+            | subscription ->
+                this.Subscription <- null
+                subscription.Dispose()
+
+module EventHandlerSlot =
+    /// The slot registered under key, if the node already has one
+    let tryGet (node: IViewNode) (key: string) =
+        match node.TryGetHandler(key) with
+        | :? EventHandlerSlot as slot -> slot
+        | _ -> null
+
+    /// Points the node's slot at handler, subscribing only when there is no slot yet
+    let inline set (node: IViewNode) (key: string) (handler: obj) ([<InlineIfLambda>] subscribe: EventHandlerSlot -> IDisposable) =
+        match tryGet node key with
+        | null ->
+            match node.TryGetHandler(key) with
+            | null -> ()
+            | other -> other.Dispose()
+
+            let slot = new EventHandlerSlot(handler)
+            slot.Subscription <- subscribe slot
+            node.SetHandler(key, slot)
+        | slot -> slot.Handler <- handler
+
+/// Event attributes never compare equal (handlers are fresh closures on every render), so they are always re-applied
+[<AbstractClass>]
+type EventAttributeData(name: string) =
+    inherit ScalarAttributeData()
+
+    /// Subscribes to the event, invoking slot.Handler (read on every event, not captured) when it fires
+    abstract Subscribe: slot: EventHandlerSlot * node: IViewNode -> IDisposable
+
+    override _.CompareBoxed(_, _) = ScalarAttributeComparison.Different
+
+    override this.UpdateNode(_, newValue, node) =
+        match newValue with
+        | ValueSome handler -> EventHandlerSlot.set node name handler (fun slot -> this.Subscribe(slot, node))
+        | ValueNone -> node.RemoveHandler(name)
+
+[<Sealed>]
+type MvuEventNoArgData(name: string, getEvent: obj -> IEvent<EventHandler, EventArgs>) =
+    inherit EventAttributeData(name)
+
+    override _.Subscribe(slot, node) =
+        (getEvent node.Target)
+            .Subscribe(fun _ ->
+                let (MsgValue msg) = unbox<MsgValue> slot.Handler
+                Dispatcher.dispatch node msg)
+
+[<Sealed>]
+type MvuEventData<'args>(name: string, getEvent: obj -> IEvent<EventHandler<'args>, 'args>) =
+    inherit EventAttributeData(name)
+
+    override _.Subscribe(slot, node) =
+        (getEvent node.Target)
+            .Subscribe(fun args ->
+                let (MsgValue r) = (unbox<'args -> MsgValue> slot.Handler) args
+                Dispatcher.dispatch node r)
+
+[<Sealed>]
+type ComponentEventNoArgData(name: string, getEvent: obj -> IEvent<EventHandler, EventArgs>) =
+    inherit EventAttributeData(name)
+
+    override _.Subscribe(slot, node) =
+        (getEvent node.Target).Subscribe(fun _ -> (unbox<unit -> unit> slot.Handler) ())
+
+[<Sealed>]
+type ComponentEventData<'args>(name: string, getEvent: obj -> IEvent<EventHandler<'args>, 'args>) =
+    inherit EventAttributeData(name)
+
+    override _.Subscribe(slot, node) =
+        (getEvent node.Target).Subscribe(fun args -> (unbox<'args -> unit> slot.Handler) args)
+
 module Attributes =
     /// Define an attribute that can fit into 8 bytes encoded as uint64 (such as float or bool)
     let inline defineSmallScalar<'T>
         name
         ([<InlineIfLambda>] decode: uint64 -> 'T)
-        ([<InlineIfLambda>] updateNode: 'T voption -> 'T voption -> IViewNode -> unit)
+        ([<InlineIfLambda>] updateNode: ScalarValue<'T> -> ScalarValue<'T> -> IViewNode -> unit)
         : SmallScalarAttributeDefinition<'T> =
         let key =
             SmallScalarAttributeDefinition.CreateAttributeData<'T>(decode, updateNode)
@@ -108,7 +204,7 @@ module Attributes =
     let inline defineSimpleScalar<'T>
         name
         ([<InlineIfLambda>] compare: 'T -> 'T -> ScalarAttributeComparison)
-        ([<InlineIfLambda>] updateNode: 'T voption -> 'T voption -> IViewNode -> unit)
+        ([<InlineIfLambda>] updateNode: ScalarValue<'T> -> ScalarValue<'T> -> IViewNode -> unit)
         : SimpleScalarAttributeDefinition<'T> =
         let key =
             SimpleScalarAttributeDefinition.CreateAttributeData(compare, updateNode)
@@ -123,7 +219,7 @@ module Attributes =
         name
         ([<InlineIfLambda>] convertValue: 'modelType -> 'valueType)
         ([<InlineIfLambda>] compare: 'modelType -> 'modelType -> ScalarAttributeComparison)
-        ([<InlineIfLambda>] updateNode: 'valueType voption -> 'valueType voption -> IViewNode -> unit)
+        ([<InlineIfLambda>] updateNode: ScalarValue<'valueType> -> ScalarValue<'valueType> -> IViewNode -> unit)
         : ScalarAttributeDefinition<'modelType, 'valueType> =
         let key =
             ScalarAttributeDefinition.CreateAttributeData<'modelType, 'valueType>(convertValue, compare, updateNode)
@@ -132,24 +228,24 @@ module Attributes =
         { Key = key; Name = name }
 
     /// Define an int attribute that is encoded into uint64
-    let inline defineInt name ([<InlineIfLambda>] updateNode: int voption -> int voption -> IViewNode -> unit) : SmallScalarAttributeDefinition<int> =
+    let inline defineInt name ([<InlineIfLambda>] updateNode: ScalarValue<int> -> ScalarValue<int> -> IViewNode -> unit) : SmallScalarAttributeDefinition<int> =
 
         defineSmallScalar name SmallScalars.Int.decode updateNode
 
     /// Define a float attribute that is encoded into uint64
-    let inline defineFloat name ([<InlineIfLambda>] updateNode: float voption -> float voption -> IViewNode -> unit) : SmallScalarAttributeDefinition<float> =
+    let inline defineFloat name ([<InlineIfLambda>] updateNode: ScalarValue<float> -> ScalarValue<float> -> IViewNode -> unit) : SmallScalarAttributeDefinition<float> =
 
         defineSmallScalar name SmallScalars.Float.decode updateNode
 
     /// Define a enum attribute that is encoded into uint64
     let inline defineEnum< ^T when ^T: enum<int>>
         name
-        ([<InlineIfLambda>] updateNode: ^T voption -> ^T voption -> IViewNode -> unit)
+        ([<InlineIfLambda>] updateNode: ScalarValue< ^T > -> ScalarValue< ^T > -> IViewNode -> unit)
         : SmallScalarAttributeDefinition< ^T > =
         defineSmallScalar name SmallScalars.IntEnum.decode updateNode
 
     /// Define a boolean attribute that is encoded into uint64
-    let inline defineBool name ([<InlineIfLambda>] updateNode: bool voption -> bool voption -> IViewNode -> unit) : SmallScalarAttributeDefinition<bool> =
+    let inline defineBool name ([<InlineIfLambda>] updateNode: ScalarValue<bool> -> ScalarValue<bool> -> IViewNode -> unit) : SmallScalarAttributeDefinition<bool> =
 
         defineSmallScalar name SmallScalars.Bool.decode updateNode
 
@@ -162,9 +258,7 @@ module Attributes =
         : WidgetAttributeDefinition =
 
         let key =
-            AttributeDefinitionStore.registerWidget
-                { ApplyDiff = applyDiff
-                  UpdateNode = updateNode }
+            AttributeDefinitionStore.registerWidget(WidgetAttributeFuncData(applyDiff, updateNode))
 
         { Key = key; Name = name }
 
@@ -177,9 +271,7 @@ module Attributes =
         : WidgetCollectionAttributeDefinition =
 
         let key =
-            AttributeDefinitionStore.registerWidgetCollection
-                { ApplyDiff = applyDiff
-                  UpdateNode = updateNode }
+            AttributeDefinitionStore.registerWidgetCollection(WidgetCollectionAttributeFuncData(applyDiff, updateNode))
 
         { Key = key; Name = name }
 
@@ -290,7 +382,7 @@ module Attributes =
     /// Define an attribute for a value supporting equality comparison
     let inline defineSimpleScalarWithEquality<'T when 'T: equality>
         name
-        ([<InlineIfLambda>] updateTarget: 'T voption -> 'T voption -> IViewNode -> unit)
+        ([<InlineIfLambda>] updateTarget: ScalarValue<'T> -> ScalarValue<'T> -> IViewNode -> unit)
         : SimpleScalarAttributeDefinition<'T> =
         let key =
             SimpleScalarAttributeDefinition.CreateAttributeData(ScalarAttributeComparers.equalityCompare, updateTarget)
@@ -300,90 +392,20 @@ module Attributes =
 
     module Mvu =
         /// Define an attribute for EventHandler
-        let inline defineEventNoArg name ([<InlineIfLambda>] getEvent: obj -> IEvent<EventHandler, EventArgs>) : SimpleScalarAttributeDefinition<MsgValue> =
-            let key =
-                SimpleScalarAttributeDefinition.CreateAttributeData(
-                    ScalarAttributeComparers.noCompare,
-                    (fun _ (newValueOpt: MsgValue voption) node ->
-                        match node.TryGetHandler(name) with
-                        | ValueNone -> ()
-                        | ValueSome handler -> handler.Dispose()
-
-                        match newValueOpt with
-                        | ValueNone -> node.RemoveHandler(name)
-                        | ValueSome(MsgValue msg) ->
-                            let event = getEvent node.Target
-                            let handler = event.Subscribe(fun _ -> Dispatcher.dispatch node msg)
-                            node.SetHandler(name, handler))
-                )
-
-                |> AttributeDefinitionStore.registerScalar
-
-            { Key = key; Name = name }
+        let defineEventNoArg name (getEvent: obj -> IEvent<EventHandler, EventArgs>) : SimpleScalarAttributeDefinition<MsgValue> =
+            { Key = AttributeDefinitionStore.registerScalar(MvuEventNoArgData(name, getEvent))
+              Name = name }
 
         /// Define an attribute for EventHandler<'T>
         let defineEvent<'args> name (getEvent: obj -> IEvent<EventHandler<'args>, 'args>) : SimpleScalarAttributeDefinition<'args -> MsgValue> =
-            let key =
-                SimpleScalarAttributeDefinition.CreateAttributeData(
-                    ScalarAttributeComparers.noCompare,
-                    (fun _ (newValueOpt: ('args -> MsgValue) voption) (node: IViewNode) ->
-                        match node.TryGetHandler(name) with
-                        | ValueNone -> ()
-                        | ValueSome handler -> handler.Dispose()
-
-                        match newValueOpt with
-                        | ValueNone -> node.RemoveHandler(name)
-                        | ValueSome fn ->
-                            let event = getEvent node.Target
-
-                            let handler =
-                                event.Subscribe(fun args ->
-                                    let (MsgValue r) = fn args
-                                    Dispatcher.dispatch node r)
-
-                            node.SetHandler(name, handler))
-                )
-                |> AttributeDefinitionStore.registerScalar
-
-            { Key = key; Name = name }
+            { Key = AttributeDefinitionStore.registerScalar(MvuEventData<'args>(name, getEvent))
+              Name = name }
 
     module Component =
         let defineEventNoArg name (getEvent: obj -> IEvent<EventHandler, EventArgs>) : SimpleScalarAttributeDefinition<unit -> unit> =
-            let key =
-                SimpleScalarAttributeDefinition.CreateAttributeData(
-                    ScalarAttributeComparers.noCompare,
-                    (fun _ (newValueOpt: (unit -> unit) voption) node ->
-                        match node.TryGetHandler(name) with
-                        | ValueNone -> ()
-                        | ValueSome handler -> handler.Dispose()
-
-                        match newValueOpt with
-                        | ValueNone -> node.RemoveHandler(name)
-                        | ValueSome(fn) ->
-                            let event = getEvent node.Target
-                            node.SetHandler(name, event.Subscribe(fun _ -> fn())))
-                )
-
-                |> AttributeDefinitionStore.registerScalar
-
-            { Key = key; Name = name }
+            { Key = AttributeDefinitionStore.registerScalar(ComponentEventNoArgData(name, getEvent))
+              Name = name }
 
         let defineEvent<'args> name (getEvent: obj -> IEvent<EventHandler<'args>, 'args>) : SimpleScalarAttributeDefinition<'args -> unit> =
-            let key =
-                SimpleScalarAttributeDefinition.CreateAttributeData(
-                    ScalarAttributeComparers.noCompare,
-                    (fun _ (newValueOpt: ('args -> unit) voption) node ->
-                        match node.TryGetHandler(name) with
-                        | ValueNone -> ()
-                        | ValueSome handler -> handler.Dispose()
-
-                        match newValueOpt with
-                        | ValueNone -> node.RemoveHandler(name)
-                        | ValueSome(fn) ->
-                            let event = getEvent node.Target
-                            node.SetHandler(name, event.Subscribe(fun args -> fn args)))
-                )
-
-                |> AttributeDefinitionStore.registerScalar
-
-            { Key = key; Name = name }
+            { Key = AttributeDefinitionStore.registerScalar(ComponentEventData<'args>(name, getEvent))
+              Name = name }

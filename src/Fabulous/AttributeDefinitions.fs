@@ -1,23 +1,99 @@
 namespace Fabulous
 
+/// An optional scalar attribute value handed to attribute updaters.
+/// Deliberately a plain struct and not 'T voption: F# unions carry [DynamicDependency] on their constructors,
+/// which makes NativeAOT keep a boxed, reflection-invokable copy of Equals/CompareTo/GetHashCode/ToString
+/// (plus the FSharp.Core comparers they use) for every 'T an attribute is defined over.
+[<Struct; NoEquality; NoComparison>]
+type ScalarValue<'T> =
+    val HasValue: bool
+    val Value: 'T
+    new(value: 'T) = { HasValue = true; Value = value }
+
+// Attribute data are objects with virtual methods rather than records of closures: a closure record costs two wrapper
+// closure types plus the curried FSharpFunc/OptimizedClosures instantiations for every value type an attribute is
+// defined over under NativeAOT, and each call goes through InvokeFast. Frequently instantiated definitions get a
+// dedicated sealed subclass; the *FuncData classes adapt the function-based APIs.
 module ScalarAttributeDefinitions =
     /// A small scalar attribute.
     /// When we can encode the value as a uint64 (64 bits), we should prefer this type.
     /// The value will be kept on the stack avoiding GC pressure.
-    [<Struct>]
-    type SmallScalarAttributeData =
-        { UpdateNode: uint64 voption -> uint64 voption -> IViewNode -> unit }
+    [<AbstractClass>]
+    type SmallScalarAttributeData() =
+        abstract UpdateNode: oldValue: uint64 voption * newValue: uint64 voption * node: IViewNode -> unit
 
     /// A regular scalar attribute.
     /// The value will be boxed and put on the heap, which can trigger GC to pass.
     /// Prefer small scalar attribute when possible.
-    [<Struct>]
-    type ScalarAttributeData =
-        { UpdateNode: obj voption -> obj voption -> IViewNode -> unit
-          CompareBoxed: obj -> obj -> ScalarAttributeComparison }
+    [<AbstractClass>]
+    type ScalarAttributeData() =
+        abstract CompareBoxed: a: obj * b: obj -> ScalarAttributeComparison
+        abstract UpdateNode: oldValue: obj voption * newValue: obj voption * node: IViewNode -> unit
+
+    [<Sealed>]
+    type SmallScalarAttributeFuncData<'T>(decode: uint64 -> 'T, updateNode: ScalarValue<'T> -> ScalarValue<'T> -> IViewNode -> unit) =
+        inherit SmallScalarAttributeData()
+
+        override _.UpdateNode(oldValueOpt, newValueOpt, node) =
+            let oldValue =
+                match oldValueOpt with
+                | ValueNone -> Unchecked.defaultof<_>
+                | ValueSome v -> ScalarValue(decode v)
+
+            let newValue =
+                match newValueOpt with
+                | ValueNone -> Unchecked.defaultof<_>
+                | ValueSome v -> ScalarValue(decode v)
+
+            updateNode oldValue newValue node
+
+    [<Sealed>]
+    type SimpleScalarAttributeFuncData<'T>
+        (compare: 'T -> 'T -> ScalarAttributeComparison, updateNode: ScalarValue<'T> -> ScalarValue<'T> -> IViewNode -> unit) =
+        inherit ScalarAttributeData()
+
+        override _.CompareBoxed(a, b) = compare (unbox<'T> a) (unbox<'T> b)
+
+        override _.UpdateNode(oldValueOpt, newValueOpt, node) =
+            let oldValue =
+                match oldValueOpt with
+                | ValueNone -> Unchecked.defaultof<_>
+                | ValueSome v -> ScalarValue(unbox<'T> v)
+
+            let newValue =
+                match newValueOpt with
+                | ValueNone -> Unchecked.defaultof<_>
+                | ValueSome v -> ScalarValue(unbox<'T> v)
+
+            updateNode oldValue newValue node
+
+    [<Sealed>]
+    type ScalarAttributeFuncData<'modelType, 'valueType>
+        (
+            convertValue: 'modelType -> 'valueType,
+            compare: 'modelType -> 'modelType -> ScalarAttributeComparison,
+            updateNode: ScalarValue<'valueType> -> ScalarValue<'valueType> -> IViewNode -> unit
+        ) =
+        inherit ScalarAttributeData()
+
+        override _.CompareBoxed(a, b) =
+            compare (unbox<'modelType> a) (unbox<'modelType> b)
+
+        override _.UpdateNode(oldValueOpt, newValueOpt, node) =
+            let oldValue =
+                match oldValueOpt with
+                | ValueNone -> Unchecked.defaultof<_>
+                | ValueSome v -> ScalarValue(convertValue(unbox<'modelType> v))
+
+            let newValue =
+                match newValueOpt with
+                | ValueNone -> Unchecked.defaultof<_>
+                | ValueSome v -> ScalarValue(convertValue(unbox<'modelType> v))
+
+            updateNode oldValue newValue node
 
     /// Attribute definition for small scalar properties (encodable on 64 bits)
-    [<Struct>]
+    [<Struct; NoEquality; NoComparison>]
     type SmallScalarAttributeDefinition<'T> =
         { Key: ScalarAttributeKey
           Name: string }
@@ -30,25 +106,13 @@ module ScalarAttributeDefinitions =
               NumericValue = encode(value)
               Value = null }
 
-        static member inline CreateAttributeData<'T>
-            ([<InlineIfLambda>] decode: uint64 -> 'T, [<InlineIfLambda>] updateNode: 'T voption -> 'T voption -> IViewNode -> unit)
+        static member CreateAttributeData<'T>
+            (decode: uint64 -> 'T, updateNode: ScalarValue<'T> -> ScalarValue<'T> -> IViewNode -> unit)
             : SmallScalarAttributeData =
-            { UpdateNode =
-                (fun oldValueOpt newValueOpt node ->
-                    let oldValueOpt =
-                        match oldValueOpt with
-                        | ValueNone -> ValueNone
-                        | ValueSome v -> ValueSome(decode(v))
-
-                    let newValueOpt =
-                        match newValueOpt with
-                        | ValueNone -> ValueNone
-                        | ValueSome v -> ValueSome(decode(v))
-
-                    updateNode oldValueOpt newValueOpt node) }
+            SmallScalarAttributeFuncData<'T>(decode, updateNode)
 
     /// Attribute definition for boxed scalar properties
-    [<Struct>]
+    [<Struct; NoEquality; NoComparison>]
     type SimpleScalarAttributeDefinition<'T> =
         { Key: ScalarAttributeKey
           Name: string }
@@ -62,25 +126,12 @@ module ScalarAttributeDefinitions =
               Value = value }
 
         static member CreateAttributeData
-            (compare: 'T -> 'T -> ScalarAttributeComparison, updateNode: 'T voption -> 'T voption -> IViewNode -> unit)
+            (compare: 'T -> 'T -> ScalarAttributeComparison, updateNode: ScalarValue<'T> -> ScalarValue<'T> -> IViewNode -> unit)
             : ScalarAttributeData =
-            { CompareBoxed = (fun a b -> compare (unbox<'T> a) (unbox<'T> b))
-              UpdateNode =
-                (fun oldValueOpt newValueOpt node ->
-                    let oldValueOpt =
-                        match oldValueOpt with
-                        | ValueNone -> ValueNone
-                        | ValueSome v -> ValueSome(unbox<'T> v)
-
-                    let newValueOpt =
-                        match newValueOpt with
-                        | ValueNone -> ValueNone
-                        | ValueSome v -> ValueSome(unbox<'T> v)
-
-                    updateNode oldValueOpt newValueOpt node) }
+            SimpleScalarAttributeFuncData<'T>(compare, updateNode)
 
     /// Attribute definition for boxed scalar properties with a custom conversion before being applied to the view
-    [<Struct>]
+    [<Struct; NoEquality; NoComparison>]
     type ScalarAttributeDefinition<'modelType, 'valueType> =
         { Key: ScalarAttributeKey
           Name: string }
@@ -93,35 +144,29 @@ module ScalarAttributeDefinitions =
               NumericValue = 0UL
               Value = value }
 
-        static member inline CreateAttributeData<'modelType, 'valueType>
+        static member CreateAttributeData<'modelType, 'valueType>
             (
-                [<InlineIfLambda>] convertValue: 'modelType -> 'valueType,
-                [<InlineIfLambda>] compare: 'modelType -> 'modelType -> ScalarAttributeComparison,
-                [<InlineIfLambda>] updateNode: 'valueType voption -> 'valueType voption -> IViewNode -> unit
+                convertValue: 'modelType -> 'valueType,
+                compare: 'modelType -> 'modelType -> ScalarAttributeComparison,
+                updateNode: ScalarValue<'valueType> -> ScalarValue<'valueType> -> IViewNode -> unit
             ) : ScalarAttributeData =
-            { CompareBoxed = (fun a b -> compare (unbox<'modelType> a) (unbox<'modelType> b))
-              UpdateNode =
-                (fun oldValueOpt newValueOpt node ->
-                    let oldValueOpt =
-                        match oldValueOpt with
-                        | ValueNone -> ValueNone
-                        | ValueSome v -> ValueSome(convertValue(unbox<'modelType> v))
-
-                    let newValueOpt =
-                        match newValueOpt with
-                        | ValueNone -> ValueNone
-                        | ValueSome v -> ValueSome(convertValue(unbox<'modelType> v))
-
-                    updateNode oldValueOpt newValueOpt node) }
+            ScalarAttributeFuncData<'modelType, 'valueType>(convertValue, compare, updateNode)
 
 module WidgetAttributeDefinitions =
-    [<Struct>]
-    type WidgetAttributeData =
-        { ApplyDiff: WidgetDiff -> IViewNode -> unit
-          UpdateNode: Widget voption -> Widget voption -> IViewNode -> unit }
+    [<AbstractClass>]
+    type WidgetAttributeData() =
+        abstract ApplyDiff: diff: WidgetDiff * node: IViewNode -> unit
+        abstract UpdateNode: oldValue: Widget voption * newValue: Widget voption * node: IViewNode -> unit
+
+    [<Sealed>]
+    type WidgetAttributeFuncData
+        (applyDiff: WidgetDiff -> IViewNode -> unit, updateNode: Widget voption -> Widget voption -> IViewNode -> unit) =
+        inherit WidgetAttributeData()
+        override _.ApplyDiff(diff, node) = applyDiff diff node
+        override _.UpdateNode(oldValue, newValue, node) = updateNode oldValue newValue node
 
     /// Attribute definition for widget properties
-    [<Struct>]
+    [<Struct; NoEquality; NoComparison>]
     type WidgetAttributeDefinition =
         { Key: WidgetAttributeKey
           Name: string }
@@ -134,13 +179,23 @@ module WidgetAttributeDefinitions =
               Value = value }
 
 module WidgetCollectionAttributeDefinitions =
-    [<Struct>]
-    type WidgetCollectionAttributeData =
-        { ApplyDiff: ArraySlice<Widget> -> WidgetCollectionItemChanges -> IViewNode -> unit
-          UpdateNode: ArraySlice<Widget> voption -> ArraySlice<Widget> voption -> IViewNode -> unit }
+    [<AbstractClass>]
+    type WidgetCollectionAttributeData() =
+        abstract ApplyDiff: oldValue: ArraySlice<Widget> * changes: WidgetCollectionItemChanges * node: IViewNode -> unit
+        abstract UpdateNode: oldValue: ArraySlice<Widget> voption * newValue: ArraySlice<Widget> voption * node: IViewNode -> unit
+
+    [<Sealed>]
+    type WidgetCollectionAttributeFuncData
+        (
+            applyDiff: ArraySlice<Widget> -> WidgetCollectionItemChanges -> IViewNode -> unit,
+            updateNode: ArraySlice<Widget> voption -> ArraySlice<Widget> voption -> IViewNode -> unit
+        ) =
+        inherit WidgetCollectionAttributeData()
+        override _.ApplyDiff(oldValue, changes, node) = applyDiff oldValue changes node
+        override _.UpdateNode(oldValue, newValue, node) = updateNode oldValue newValue node
 
     /// Attribute definition for collection properties
-    [<Struct>]
+    [<Struct; NoEquality; NoComparison>]
     type WidgetCollectionAttributeDefinition =
         { Key: WidgetCollectionAttributeKey
           Name: string }
@@ -162,27 +217,50 @@ module AttributeDefinitionStore =
     let private _widgets = ResizeArray<WidgetAttributeData>()
     let private _widgetCollections = ResizeArray<WidgetCollectionAttributeData>()
 
-    let registerSmallScalar (data: SmallScalarAttributeData) : ScalarAttributeKey =
-        let index = _smallScalars.Count
-        _smallScalars.Add(data)
+    /// Guards registration. Definitions are created lazily on first use, and update functions can build widgets on
+    /// thread pool threads while the UI thread renders. Lookups stay lock-free: a key is only handed out once its
+    /// entry has been added.
+    let SyncRoot = System.Threading.Lock()
 
-        (index ||| ScalarAttributeKey.Code.Inline) * 1<scalarAttributeKey>
+    let registerSmallScalar (data: SmallScalarAttributeData) : ScalarAttributeKey =
+        SyncRoot.Enter()
+
+        try
+            let index = _smallScalars.Count
+            _smallScalars.Add(data)
+            (index ||| ScalarAttributeKey.Code.Inline) * 1<scalarAttributeKey>
+        finally
+            SyncRoot.Exit()
 
     let registerScalar (data: ScalarAttributeData) : ScalarAttributeKey =
-        let index = _scalars.Count
-        _scalars.Add(data)
+        SyncRoot.Enter()
 
-        (index ||| ScalarAttributeKey.Code.Boxed) * 1<scalarAttributeKey>
+        try
+            let index = _scalars.Count
+            _scalars.Add(data)
+            (index ||| ScalarAttributeKey.Code.Boxed) * 1<scalarAttributeKey>
+        finally
+            SyncRoot.Exit()
 
     let registerWidget (data: WidgetAttributeData) : WidgetAttributeKey =
-        let index = _widgets.Count
-        _widgets.Add(data)
-        index * 1<widgetAttributeKey>
+        SyncRoot.Enter()
+
+        try
+            let index = _widgets.Count
+            _widgets.Add(data)
+            index * 1<widgetAttributeKey>
+        finally
+            SyncRoot.Exit()
 
     let registerWidgetCollection (data: WidgetCollectionAttributeData) : WidgetCollectionAttributeKey =
-        let index = _widgetCollections.Count
-        _widgetCollections.Add(data)
-        index * 1<widgetCollectionAttributeKey>
+        SyncRoot.Enter()
+
+        try
+            let index = _widgetCollections.Count
+            _widgetCollections.Add(data)
+            index * 1<widgetCollectionAttributeKey>
+        finally
+            SyncRoot.Exit()
 
     let getScalar (key: ScalarAttributeKey) : ScalarAttributeData =
         let index = ScalarAttributeKey.getKeyValue key

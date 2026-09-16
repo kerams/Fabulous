@@ -67,7 +67,7 @@ and IViewNode =
     abstract member MapMsg: (obj -> obj) option with get, set
 
     /// Return the event handler for a given attribute key if set
-    abstract member TryGetHandler: string -> IDisposable voption
+    abstract member TryGetHandler: string -> IDisposable | null
 
     /// Set the event handler for a given attribute name
     abstract member SetHandler: string * IDisposable -> unit
