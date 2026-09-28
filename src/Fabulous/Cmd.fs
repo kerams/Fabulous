@@ -138,29 +138,31 @@ module Cmd =
 
         fun (value: 'value) ->
             [ fun dispatch ->
-                  lock funLock (fun () ->
-                      match cts with
-                      | null -> ()
-                      | cts ->
-                          cts.Cancel()
-                          cts.Dispose()
+                let struct (mine, token) =
+                    lock funLock (fun () ->
+                        match cts with
+                        | null -> ()
+                        | old ->
+                            old.Cancel()
+                            old.Dispose()
 
-                      cts <- new CancellationTokenSource()
+                        let c = new CancellationTokenSource()
+                        cts <- c
+                        struct (c, c.Token))
 
-                      backgroundTask {
-                          do! Task.Delay (timeout, cts.Token)
+                backgroundTask {
+                    do! Task.Delay(timeout, token)
 
-                          lock funLock (fun () ->
-                              dispatch(fn value)
+                    let isLatest =
+                        lock funLock (fun () ->
+                            if obj.ReferenceEquals(cts, mine) then
+                                cts <- null
+                                mine.Dispose()
+                                true
+                            else
+                                false)
 
-                              match cts with
-                              | null -> ()
-                              | cts' ->
-                                  cts'.Cancel()
-                                  cts'.Dispose()
-                                  cts <- null
-                          )
-                      }
-                      |> ignore
-                  )
-            ]
+                    if isLatest then
+                        dispatch(fn value)
+                }
+                |> ignore<Task> ]
