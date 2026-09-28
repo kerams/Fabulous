@@ -10,7 +10,25 @@ type ComponentBodyBuilder<'msg, 'marker when 'msg: equality> =
 type ComponentBuilder<'parentMsg, 'marker when 'parentMsg: equality> =
     val public Key: string
 
-    new(key: string) = { Key = key }
+    val public Props: objnull
+    val public PropsType: System.Type | null
+    val public AreEqual: ComponentPropsComparer | null
+
+    new(key: string) =
+        { Key = key; Props = null; PropsType = null; AreEqual = null }
+
+    new(key: string, props: objnull, propsType: System.Type, areEqual: ComponentPropsComparer) =
+        { Key = key; Props = props; PropsType = propsType; AreEqual = areEqual }
+
+    /// Only this adapter specializes over props. Do not introduce structural equality here:
+    /// it roots FSharp.Core comparer machinery per value type under NativeAOT.
+    static member inline Create(key: string, props: 'props, [<InlineIfLambda>] areEqual: 'props -> 'props -> bool) =
+        ComponentBuilder<'parentMsg, 'marker>(
+            key,
+            box props,
+            typeof<'props>,
+            ComponentPropsComparer(fun previous next -> areEqual (unbox<'props> previous) (unbox<'props> next))
+        )
 
     member inline this.Yield(widgetBuilder: WidgetBuilder<'msg, 'marker>) =
         ComponentBodyBuilder<'msg, 'marker>(fun treeContext context bindings -> struct (treeContext, context, bindings, widgetBuilder))
@@ -41,7 +59,7 @@ type ComponentBuilder<'parentMsg, 'marker when 'parentMsg: equality> =
 
                 struct (treeA, ctxA, result.Compile()))
 
-        let data = { Key = this.Key; Body = compiledBody }
+        let data = ComponentData(this.Key, compiledBody, this.Props, this.PropsType, this.AreEqual)
 
         let cdata = Component'.Data.WithValue(data)
         WidgetBuilder<'parentMsg, 'marker>(Component'.WidgetKey, &cdata)

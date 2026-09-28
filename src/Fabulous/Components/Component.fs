@@ -9,14 +9,25 @@ type binding
 type ComponentBody =
     delegate of ViewTreeContext * ComponentContext -> struct (ViewTreeContext * ComponentContext * Widget)
 
-[<Struct; NoEquality; NoComparison>]
-type ComponentData = { Key: string; Body: ComponentBody }
+/// Props are erased at the builder boundary: rendering never specializes over the props type.
+type ComponentPropsComparer = delegate of objnull * objnull -> bool
+
+/// A plain, non-generic class avoids generated structural equality and reflection roots under NativeAOT.
+[<Sealed>]
+type ComponentData(key: string, body: ComponentBody, props: objnull, propsType: Type | null, areEqual: ComponentPropsComparer | null) =
+    member _.Key = key
+    member _.Body = body
+    member _.Props = props
+    member _.PropsType = propsType
+    member _.AreEqual = areEqual
 
 type Component
-    (componentDataKey: ScalarAttributeKey, treeContext: ViewTreeContext, context: ComponentContext, body: ComponentBody) =
+    (componentDataKey: ScalarAttributeKey, treeContext: ViewTreeContext, context: ComponentContext, data: ComponentData) =
     let mutable _treeContext = treeContext
     let mutable _context = context
-    let mutable _body: ComponentBody | null = body
+    let mutable _data: ComponentData | null = data
+    let mutable _renderedProps: objnull = null
+    let mutable _renderedPropsType: Type | null = null
     let mutable _widget = Unchecked.defaultof<_>
     let mutable _view = null
     let mutable _contextSubscription: IDisposable | null = null
@@ -66,9 +77,12 @@ type Component
         _isReadyForRenderRequest <- false
         _contextSubscription <- _context.RenderNeeded.Subscribe(this.Render)
 
+        let data = Unchecked.nonNull _data
         let struct (treeContext, context, rootWidget) =
-            _body.Invoke(_treeContext, _context)
+            data.Body.Invoke(_treeContext, _context)
 
+        _renderedProps <- data.Props
+        _renderedPropsType <- data.PropsType
         _widget <- rootWidget
         _treeContext <- treeContext
         _context <- context
@@ -106,9 +120,12 @@ type Component
         _isReadyForRenderRequest <- false
         _contextSubscription <- _context.RenderNeeded.Subscribe(this.Render)
 
+        let data = Unchecked.nonNull _data
         let struct (treeContext, context, rootWidget) =
-            _body.Invoke(_treeContext, _context)
+            data.Body.Invoke(_treeContext, _context)
 
+        _renderedProps <- data.Props
+        _renderedPropsType <- data.PropsType
         _widget <- rootWidget
         _treeContext <- treeContext
         _context <- context
@@ -144,19 +161,21 @@ type Component
         node
 
     member private this.RenderInternal() =
-        if isNull _body then
-            () // Component has been disposed
-        else
+        match _data with
+        | null -> () // Component has been disposed
+        | data ->
             let prevRootWidget = _widget
             let prevContext = _context
 
             let struct (treeContext, context, currRootWidget) =
-                _body.Invoke(_treeContext, _context)
+                data.Body.Invoke(_treeContext, _context)
 
+            _renderedProps <- data.Props
+            _renderedPropsType <- data.PropsType
             _widget <- currRootWidget
             _treeContext <- treeContext
 
-            if prevContext <> context then
+            if not(obj.ReferenceEquals(prevContext, context)) then
                 _contextSubscription.Dispose()
                 (prevContext :> IDisposable).Dispose()
                 _contextSubscription <- context.RenderNeeded.Subscribe(this.Render)
@@ -167,6 +186,23 @@ type Component
             let prev = ValueSome prevRootWidget
             Reconciler.update treeContext.CanReuseView &prev &currRootWidget viewNode
 
+    /// Parent renders refresh the closure without replacing the component's state slots.
+    /// Compare against the last rendered props, not an intermediate skipped update.
+    member this.Update(data: ComponentData) =
+        if not(isNull _data) then
+            let skip =
+                match data.AreEqual with
+                | null -> false
+                | areEqual ->
+                    obj.ReferenceEquals(_renderedPropsType, data.PropsType)
+                    && areEqual.Invoke(_renderedProps, data.Props)
+
+            // A later local state update must use the most recently received props and callbacks.
+            _data <- data
+
+            if not skip then
+                this.Render()
+
     member this.Dispose() =
         if not(isNull _contextSubscription) then
             _contextSubscription.Dispose()
@@ -174,7 +210,9 @@ type Component
         if not(isNull _context) then
             (_context :> IDisposable).Dispose()
 
-        _body <- null
+        _data <- null
+        _renderedProps <- null
+        _renderedPropsType <- null
         _widget <- Unchecked.defaultof<_>
         _view <- null
         _treeContext <- Unchecked.defaultof<_>
@@ -185,7 +223,7 @@ type Component
         member this.Dispose() = this.Dispose()
 
     member this.Render() =
-        if isNull _body then
+        if isNull _data then
             () // Component has been disposed
         else if not _isReadyForRenderRequest then
             _pendingRenderRequested <- true

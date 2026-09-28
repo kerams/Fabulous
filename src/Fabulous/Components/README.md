@@ -1,3 +1,49 @@
+# Component rendering and props
+
+`Component(key) { ... }` refreshes its body on parent updates. The body is a fresh closure, so captured
+inputs and callbacks are current. Reusing the same component key at the same location retains its
+`ComponentContext` and `State` slots. Changing the key remounts it. Keep the order and types of state
+bindings stable; changing a state's initializer does not reset an existing slot.
+
+Fabulous.Avalonia also exposes an explicit memo overload:
+
+```fsharp
+let counter value =
+    Component("counter", value, (fun previous next -> previous = next)) {
+        let! count = State 0
+        TextBlock($"{value}: {count.Current}")
+    }
+```
+
+In a platform binding, expose it with an inline forwarding member:
+
+```fsharp
+static member inline Component<'msg, 'marker, 'props when 'msg: equality>
+    (key: string, props: 'props, [<InlineIfLambda>] areEqual: 'props -> 'props -> bool) =
+    ComponentBuilder<'msg, 'marker>.Create(key, props, areEqual)
+```
+
+`areEqual previousRenderedProps nextProps = true` skips the body and reconciliation of its output.
+The latest body is retained even when skipped, so a later local state update renders with the latest
+inputs. Local state updates always bypass the props comparer. Component-level modifiers still update
+independently of memoization. Changing the props type forces a render without calling the old-type
+comparison. Comparers must account for every input used by the body, including callbacks; excluding an
+input can leave the visible UI and installed handlers stale until another render.
+
+Props have no equality constraint. The framework does not apply structural equality or provide an
+implicit default comparer. The typed adapter is inlined at the call site; props, comparison and runtime
+rendering use a non-generic payload and delegate. Avoid adding generic props records/unions or generic
+structural equality here: they can root per-value-type equality/comparison and reflection code in
+NativeAOT. Component identity is still the key, not the props.
+
+A parent must rebuild the component to supply fresh inputs. Storing an already-built widget in a model
+still stores its captured inputs; store a render function or model data when those inputs must change.
+The existing renderer's stable native root requirement remains: this change does not implement native
+root replacement or components directly wrapping other components without a native control boundary.
+
+The implementation notes below describe the original computation-expression design.
+
+---
 ## What's going on here:
 This is an attempt at making re-executable computation expressions with a context being passed implicitly.
 
